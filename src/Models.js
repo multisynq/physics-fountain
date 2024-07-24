@@ -1,6 +1,6 @@
 // Microverse Base
 
-import { ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, v3_scale, v3_add, v3_sub, v3_normalize} from "@croquet/worldcore";
+import { ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, v3_multiply, v3_scale, v3_add, v3_sub, v3_normalize} from "@croquet/worldcore";
 import { RAPIER, RapierManager, AM_RapierWorld, AM_RapierRigidBody} from "@croquet/worldcore-rapier";
 
 function rgb(r, g, b) {
@@ -118,19 +118,19 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
         cd = RAPIER.ColliderDesc.cuboid(0.5, 1, 0.5);
         this.createCollider(cd);
 
-        cd = RAPIER.ColliderDesc.cuboid(0.5, 10, 25);
+        cd = RAPIER.ColliderDesc.cuboid(0.5, 2, 25);
         cd.translation = new RAPIER.Vector3(-24,0,0);
         this.createCollider(cd);
 
-        cd = RAPIER.ColliderDesc.cuboid(0.5, 10, 25);
+        cd = RAPIER.ColliderDesc.cuboid(0.5, 2, 25);
         cd.translation = new RAPIER.Vector3(24,0,0);
         this.createCollider(cd);
 
-        cd = RAPIER.ColliderDesc.cuboid(25, 10, 0.5);
+        cd = RAPIER.ColliderDesc.cuboid(25, 2, 0.5);
         cd.translation = new RAPIER.Vector3(0,0,24);
         this.createCollider(cd);
 
-        cd = RAPIER.ColliderDesc.cuboid(25, 10, 0.5);
+        cd = RAPIER.ColliderDesc.cuboid(25, 2, 0.5);
         cd.translation = new RAPIER.Vector3(0,0,-24);
         this.createCollider(cd);
 
@@ -168,10 +168,12 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
         console.log("model reset")
         this.publish("input", "reset");
     }
-    
+
     doShoot(gun) {
 
-        const aim = v3_normalize(v3_sub([0,15,0], gun));
+        // give a bit more upwards velocity as the gun gets further away
+        const aim = v3_normalize(v3_sub([0,Math.abs(gun[2])/3,0], gun));
+        console.log(aim)
         const type = this.random();
         let shape = "cube";
         if (type > 0.4) shape = "cylinder";
