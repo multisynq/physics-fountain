@@ -79,7 +79,14 @@ class GodView extends ViewService {
         this.subscribe("input", "pointerDown", this.doPointerDown);
         this.subscribe("input", "pointerUp", this.doPointerUp);
         this.subscribe("input", "pointerDelta", this.doPointerDelta);
-        //this.subscribe("input", "doubleClick", this.resetCamera);
+        this.subscribe("input", "rDown", this.resetCamera);
+        this.subscribe("input", "RDown", this.resetAll);
+        this.subscribe("input", "reset", this.resetCamera);
+    }
+
+    resetAll() {
+        this.publish("input", "resetAll");
+        console.log("reset all");
     }
 
     resetCamera() {
@@ -115,7 +122,7 @@ class GodView extends ViewService {
         rm.camera.fov = fov;
         rm.camera.updateProjectionMatrix();
     }
-
+ 
     doPointerDown() {
         if (this.paused) return;
         this.dragging = true;

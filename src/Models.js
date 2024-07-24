@@ -3,8 +3,6 @@
 import { ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, v3_scale, v3_add, v3_sub, v3_normalize} from "@croquet/worldcore";
 import { RAPIER, RapierManager, AM_RapierWorld, AM_RapierRigidBody} from "@croquet/worldcore-rapier";
 
-// import { SprayPawn, FountainPawn } from "./Views";
-
 function rgb(r, g, b) {
     return [r/255, g/255, b/255];
 }
@@ -71,9 +69,6 @@ class BlockActor extends mix(Actor).with(AM_Spatial, AM_RapierRigidBody) {
         super.init(options);
 
         this.buildCollider();
-
-        this.subscribe("input", "zDown", this.goLeft);
-        this.subscribe("input", "xDown", this.goRight);
     }
 
     buildCollider() {
@@ -99,32 +94,7 @@ class BlockActor extends mix(Actor).with(AM_Spatial, AM_RapierRigidBody) {
         }
 
         this.createCollider(cd);
-
     }
-
-    // init(options) {
-    //     super.init(options);
-
-    //     console.log("new block");
-
-    //     this.subscribe("input", "zDown", this.goLeft);
-    //     this.subscribe("input", "xDown", this.goRight);
-    // }
-
-    goLeft() {
-        console.log("left");
-        const translation = [...this.translation];
-        translation[0] -= 0.1;
-        this.set({translation});
-    }
-
-    goRight() {
-        console.log("right");
-        const translation = [...this.translation];
-        translation[0] += 0.1;
-        this.set({translation});
-    }
-
 }
 BlockActor.register('BlockActor');
 
@@ -165,7 +135,7 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
         this.createCollider(cd);
 
         this.subscribe("ui", "shoot", this.doShoot);
-
+        this.subscribe("input", "resetAll", this.reset);
         this.future(1000).spray();
     }
 
@@ -194,6 +164,11 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
         spray.rigidBody.applyTorqueImpulse(new RAPIER.Vector3(...spin), true);
     }
 
+    reset() {
+        console.log("model reset")
+        this.publish("input", "reset");
+    }
+    
     doShoot(gun) {
 
         const aim = v3_normalize(v3_sub([0,15,0], gun));
