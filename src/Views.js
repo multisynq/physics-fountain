@@ -68,6 +68,7 @@ FountainPawn.register("FountainPawn");
 let fov = 60;
 let pitch = toRad(-20);
 let yaw = toRad(-30);
+let position = [0,0,50];
 
 class GodView extends ViewService {
 
@@ -90,6 +91,7 @@ class GodView extends ViewService {
     }
 
     resetCamera() {
+        position = [0,0,50];
         fov = 60;
         pitch = toRad(-20);
         yaw = toRad(-30);
@@ -103,7 +105,7 @@ class GodView extends ViewService {
         const pitchMatrix = m4_rotation([1,0,0], pitch);
         const yawMatrix = m4_rotation([0,1,0], yaw);
 
-        let cameraMatrix = m4_translation([0,0,50]);
+        let cameraMatrix = m4_translation(position);
         cameraMatrix = m4_multiply(cameraMatrix,pitchMatrix);
         cameraMatrix = m4_multiply(cameraMatrix,yawMatrix);
 
@@ -118,9 +120,11 @@ class GodView extends ViewService {
     onWheel(data) {
         if (this.paused) return;
         const rm = this.service("ThreeRenderManager");
-        fov = Math.max(10, Math.min(120, fov + data.deltaY / 50));
-        rm.camera.fov = fov;
-        rm.camera.updateProjectionMatrix();
+        position[2] = Math.max(10, Math.min(100, position[2] - data.deltaY / 10));
+        this.updateCamera(); 
+        //fov = Math.max(10, Math.min(120, fov + data.deltaY / 50));
+        //rm.camera.fov = fov;
+        //rm.camera.updateProjectionMatrix();
     }
  
     doPointerDown() {
@@ -149,7 +153,6 @@ class GodView extends ViewService {
 //-- MyViewRoot ----------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
 
-let gun = [0,1,50];
 
 export class MyViewRoot extends ViewRoot {
 
@@ -165,7 +168,6 @@ export class MyViewRoot extends ViewRoot {
     }
 
     onStart() {
-        //this.buildHUD();
         this.buildLights();
         this.buildInstances();
     }
@@ -268,18 +270,6 @@ export class MyViewRoot extends ViewRoot {
         }
     }
 
-    buildHUD() {
-            const wm = this.service("WidgetManager2");
-            const hud = new Widget2({parent: wm.root, autoSize: [1,1]});
-            const recenter = new ButtonWidget2({parent: hud, translation: [-10,10], size: [100,30], anchor:[1,0], pivot: [1,0]});
-            recenter.label.set({text:"Recenter", point:14, border: [4,4,4,4]});
-            recenter.onClick = () => this.doRecenter();
-
-            const shoot = new ButtonWidget2({parent: hud, translation: [-10,45], size: [100,30], anchor:[1,0], pivot: [1,0]});
-            shoot.label.set({text:"Shoot", point:14, border: [4,4,4,4]});
-            shoot.onClick = () => this.doShoot();
-    }
-
     doRecenter() {
         fov = 60;
         pitch = toRad(-20);
@@ -291,6 +281,7 @@ export class MyViewRoot extends ViewRoot {
         const pitchMatrix = m4_rotation([1,0,0], pitch)
         const yawMatrix = m4_rotation([0,1,0], yaw)
         const both = m4_multiply(pitchMatrix, yawMatrix);
+        let gun = [position[0], position[1]-1, position[2]];
         const shoot = v3_transform(gun, both);
         this.publish("ui", "shoot", shoot);
     }
