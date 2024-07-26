@@ -19,16 +19,11 @@
             }
         </script>
         <script type="module">
-import { StartWorldcore, App } from "@croquet/worldcore";
-
-// Microverse Base
-
-import { ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, v3_multiply, v3_scale, v3_add, v3_sub, v3_normalize} from "@croquet/worldcore";
+import { StartWorldcore, App, UserManager, User, ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, v3_scale, 
+    v3_add, v3_sub, v3_normalize, ViewRoot, Pawn, InputManager, PM_ThreeVisible, ThreeRenderManager, 
+    PM_Spatial, PM_Avatar, AM_Avatar, THREE, PM_Smoothed, toRad, m4_rotation, m4_multiply, TAU, m4_translation, 
+    v3_transform, q_axisAngle, q_multiply, ThreeInstanceManager, PM_ThreeInstanced, ViewService} from "@croquet/worldcore";
 import { RAPIER, RapierManager, AM_RapierWorld, AM_RapierRigidBody} from "@croquet/worldcore-rapier";
-
-import { ViewRoot, Pawn, InputManager, PM_ThreeVisible, ThreeRenderManager, PM_Spatial, THREE, PM_Smoothed, toRad, m4_rotation, m4_multiply,
-    Widget2, ButtonWidget2, TAU, m4_translation, v3_transform, ThreeInstanceManager,
-    PM_ThreeInstanced, ViewService } from "@croquet/worldcore";
 
 function rgb(r, g, b) {
     return [r/255, g/255, b/255];
@@ -37,7 +32,6 @@ function rgb(r, g, b) {
 //------------------------------------------------------------------------------------------
 //-- SprayActor ----------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
-
 class SprayActor extends mix(Actor).with(AM_Spatial, AM_RapierRigidBody) {
     get pawn() {return "SprayPawn"}
 
@@ -84,7 +78,6 @@ SprayActor.register('SprayActor');
 //------------------------------------------------------------------------------------------
 //-- BlockActor ----------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
-
 class BlockActor extends mix(Actor).with(AM_Spatial, AM_RapierRigidBody) {
 
     get pawn() {return "SprayPawn"}
@@ -125,14 +118,9 @@ class BlockActor extends mix(Actor).with(AM_Spatial, AM_RapierRigidBody) {
 }
 BlockActor.register('BlockActor');
 
-
-
 //------------------------------------------------------------------------------------------
 //-- FountainActor ------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
-
-// class TestActor extends mix(Actor).with(AM_Spatial) {}
-
+//-----------------------------------------------------------------------------------------
 class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_RapierRigidBody) {
     get pawn() {return "FountainPawn"}
 
@@ -217,15 +205,52 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
 
 }
 FountainActor.register('FountainActor');
+//------------------------------------------------------------------------------------------
+//-- Users ---------------------------------------------------------------------------------
+// Create a new avatar when a new user joins.
+//------------------------------------------------------------------------------------------
 
+class MyUserManager extends UserManager {
+    get defaultUser() {return MyUser}
+}
+MyUserManager.register('MyUserManager');
+
+class MyUser extends User {
+    init(options) {
+        super.init(options);
+        const base = this.wellKnownModel("ModelRoot").base;
+
+        const pitchQ = q_axisAngle([1,0,0], pitch)
+        const yawQ = q_axisAngle([0,1,0], yaw)
+        const rotation = q_multiply(pitchQ, yawQ);
+
+        this.avatar = AvatarActor.create({
+            parent: base,
+            driver: this.userId,
+            translation: [0,0,0],
+            rotation: rotation
+        });
+        console.log(this.avatar)
+    }
+
+    saveProps() {
+        const { color, colorIndex, translation, rotation } = this.avatar;
+        return { color, colorIndex, translation, rotation };
+    }
+
+    destroy() {
+        super.destroy();
+        if (this.avatar) this.avatar.destroy();
+    }
+}
+MyUser.register('MyUser');
 //------------------------------------------------------------------------------------------
 //-- MyModelRoot ---------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
-
 export class MyModelRoot extends ModelRoot {
 
     static modelServices() {
-        return [RapierManager];
+        return [RapierManager, MyUserManager];
     }
 
     init(...args) {
@@ -275,7 +300,6 @@ export class MyModelRoot extends ModelRoot {
 MyModelRoot.register("MyModelRoot");
 
 // Views
-
 function setGeometryColor(geometry, color) {
     const count = geometry.getAttribute("position").count;
     const colors = [];
@@ -288,7 +312,6 @@ function setGeometryColor(geometry, color) {
 //------------------------------------------------------------------------------------------
 //-- SprayPawn -------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
-
 export class SprayPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeInstanced) {
     constructor(...args) {
         super(...args);
@@ -300,7 +323,6 @@ SprayPawn.register("SprayPawn");
 //------------------------------------------------------------------------------------------
 //-- FountainPawn -------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
-
 export class FountainPawn extends mix(Pawn).with(PM_Spatial, PM_ThreeVisible) {
     constructor(...args) {
         super(...args);
@@ -335,11 +357,36 @@ FountainPawn.register("FountainPawn");
 //------------------------------------------------------------------------------------------
 //-- GodView -------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
-
-let fov = 60;
 let pitch = toRad(-20);
 let yaw = toRad(-30);
 let position = [0,0,40];
+
+class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_Avatar) {
+
+    constructor(actor) {
+        super(actor);
+        let sphere = new THREE.SphereGeometry( 1, 10, 10 );
+        let material = new THREE.MeshStandardMaterial( {color: new THREE.Color(1,1,1)} );
+        let mesh = new THREE.Mesh( sphere, material );
+        mesh.position.set(...position);
+        let group = new THREE.Group();
+        group.add(mesh);
+        this.setRenderObject(group);
+        console.log("AvatarPawn constructor");
+    }
+}
+AvatarPawn.register("AvatarPawn");
+
+class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
+    get pawn() {return "AvatarPawn"}
+    init(options) {
+        super.init(options);
+        //this.listen("reset", this.reset);
+        //this.listen("move", this.move);
+    }
+}
+AvatarActor.register('AvatarActor');
+
 
 class GodView extends ViewService {
 
@@ -363,7 +410,6 @@ class GodView extends ViewService {
 
     resetCamera() {
         position = [0,0,40];
-        fov = 60;
         pitch = toRad(-20);
         yaw = toRad(-30);
         this.updateCamera();
@@ -384,7 +430,7 @@ class GodView extends ViewService {
         rm.camera.matrixAutoUpdate = false;
         rm.camera.matrixWorldNeedsUpdate = true;
 
-        rm.camera.fov = fov;
+        rm.camera.fov = 60;
         rm.camera.updateProjectionMatrix();
     }
 
@@ -393,9 +439,6 @@ class GodView extends ViewService {
         const rm = this.service("ThreeRenderManager");
         position[2] = Math.max(10, Math.min(100, position[2] - data.deltaY / 10));
         this.updateCamera(); 
-        //fov = Math.max(10, Math.min(120, fov + data.deltaY / 50));
-        //rm.camera.fov = fov;
-        //rm.camera.updateProjectionMatrix();
     }
  
     doPointerDown() {
@@ -423,8 +466,6 @@ class GodView extends ViewService {
 //------------------------------------------------------------------------------------------
 //-- MyViewRoot ----------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
-
-
 export class MyViewRoot extends ViewRoot {
 
     static viewServices() {
@@ -542,7 +583,6 @@ export class MyViewRoot extends ViewRoot {
     }
 
     doRecenter() {
-        fov = 60;
         pitch = toRad(-20);
         yaw = toRad(-30);
         this.service("GodView").updateCamera();
@@ -558,8 +598,6 @@ export class MyViewRoot extends ViewRoot {
     }
 
 }
-
-//App.makeWidgetDock();
 
 StartWorldcore({
     appId: 'io.croquet.physics',
