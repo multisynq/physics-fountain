@@ -9,6 +9,14 @@
                 overflow: hidden;
                 background: rgb(30, 30, 30);
             }
+            #codelink {
+                position: fixed; bottom: 10px; right: 10px; padding: .5em; border-radius: 30px;
+                opacity: 50%; background: lightgray; box-shadow: 1px 1px 5px black;
+                text-decoration: none; font-family: monospace; font-size: 1.5em; z-index: 1000;
+            }
+            #codelink:hover {
+                opacity: 100%;
+            }
         </style>
         <script type="importmap">
             {
@@ -35,7 +43,7 @@ function rgb(r, g, b) {
 //------------------------------------------------------------------------------------------
 class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
     get pawn() { return "AvatarPawn" }
-    // no need to override init, but we can if we want to 
+    // no need to override init, but we can if we need to 
     init(options) {
         super.init(options);
     }
@@ -563,6 +571,7 @@ export class MyViewRoot extends ViewRoot {
         }
     }
 }
+App.makeWidgetDock(); // shows QR code
 
 StartWorldcore({
     appId: 'io.croquet.physics',
@@ -573,5 +582,7 @@ StartWorldcore({
         </script>
     </head>
     <body>
+        <a id="codelink" href="https://github.com/multisynq/physics-fountain/blob/main/index.html"
+        title="View source code on GitHub" target="_blank">{}</a>
     </body>
 </html> 
