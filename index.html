@@ -38,11 +38,6 @@ class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
     init(options) {
         super.init(options);
         this.isAvatar = true;
-        //this.subscribe("input", "move", this.move);
-    }
-
-    move(translation){
-        this.translateTo(translation);
     }
 }
 AvatarActor.register('AvatarActor');
@@ -238,15 +233,8 @@ class MyUser extends User {
         const fountain = this.wellKnownModel("ModelRoot").fountain;
         this.avatar = AvatarActor.create({
             parent: fountain,
-            driver: this.userId,
-            tags: ["avatar"],
-            translation: [10, 10, 10],
+            driver: this.userId
         });
-    }
-
-    saveProps() {
-        const { color, colorIndex, translation, rotation } = this.avatar;
-        return { color, colorIndex, translation, rotation };
     }
 
     destroy() {
@@ -515,8 +503,8 @@ export class MyViewRoot extends ViewRoot {
         const im = this.service("ThreeInstanceManager");
 
         const  material = new THREE.MeshStandardMaterial( {color: new THREE.Color(1,1,1)} );
-        material.side = THREE.DoubleSide;
-        material.shadowSide = THREE.DoubleSide;
+        material.side = THREE.SingleSide;
+        material.shadowSide = THREE.SingleSide;
         material.castShadow = true;
         material.vertexColors = true;
 
@@ -578,12 +566,6 @@ export class MyViewRoot extends ViewRoot {
             mesh.castShadow = true;
             mesh.receiveShadow = true;
         }
-    }
-
-    doRecenter() {
-        pitch = toRad(-20);
-        yaw = toRad(-30);
-        this.service("GodView").updateCamera();
     }
 
     doShoot() {
