@@ -11,7 +11,11 @@ Uses Multisynq key
 
 ## UI 
 Drag to spin
+
 Wheel to zoom in/out
+
 Click to shoot
+
 'r' - to reset original position
+
 'R' - to reset all uses to original position
