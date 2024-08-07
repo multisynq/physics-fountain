@@ -35,9 +35,9 @@ function rgb(r, g, b) {
 //------------------------------------------------------------------------------------------
 class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
     get pawn() { return "AvatarPawn" }
+    // no need to override init, but we can if we want to 
     init(options) {
         super.init(options);
-        this.isAvatar = true;
     }
 }
 AvatarActor.register('AvatarActor');
@@ -310,10 +310,6 @@ function setGeometryColor(geometry, color) {
 //------------------------------------------------------------------------------------------
 //-- AvatarPawn -------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
-let pitch = toRad(-20);
-let yaw = toRad(-30);
-let position = [0,0,40];
-
 export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_Avatar) {
 
     constructor(actor) {
@@ -334,6 +330,8 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
         this.subscribe("input", "rDown", this.resetCamera);
         this.subscribe("input", "RDown", this.resetAll);
         this.subscribe("input", "reset", this.resetCamera);
+        this.subscribe("input", " Down", this.doShoot);
+        this.subscribe("input", "tap", this.doShoot);
     }
 
     resetAll() {
@@ -342,20 +340,19 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
     }
 
     resetCamera() {
-        position = [0,0,40];
-        pitch = toRad(-20);
-        yaw = toRad(-30);
+        this.position = [0,0,40];
+        this.pitch = toRad(-20);
+        this.yaw = toRad(-30);
         this.updateCamera();
     }
 
     updateCamera() {
-        if (this.paused) return;
         const rm = this.service("ThreeRenderManager");
 
-        const pitchMatrix = m4_rotation([1,0,0], pitch);
-        const yawMatrix = m4_rotation([0,1,0], yaw);
+        const pitchMatrix = m4_rotation([1,0,0], this.pitch);
+        const yawMatrix = m4_rotation([0,1,0], this.yaw);
 
-        let cameraMatrix = m4_translation(position);
+        let cameraMatrix = m4_translation(this.position);
         cameraMatrix = m4_multiply(cameraMatrix,pitchMatrix);
         cameraMatrix = m4_multiply(cameraMatrix,yawMatrix);
 
@@ -374,34 +371,36 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
     }
 
     onWheel(data) { // zoom in and out
-        if (this.paused) return;
         const rm = this.service("ThreeRenderManager");
-        position[2] = Math.max(10, Math.min(100, position[2] - data.deltaY / 10));
+        this.position[2] = Math.max(10, Math.min(100, this.position[2] - data.deltaY / 10));
         this.updateCamera(); 
     }
  
     doPointerDown() {
-        if (this.paused) return;
         this.dragging = true;
     }
 
     doPointerUp() {
-        if (this.paused) return;
         this.dragging = false;
     }
 
     doPointerDelta(e) {
-        if (this.paused) return;
         if (!this.dragging) return;
-        yaw += -0.01 * e.xy[0];
-        yaw %= TAU;
-        pitch += -0.01 * e.xy[1];
-        pitch = Math.min(pitch, toRad(-15));
-        pitch = Math.max(pitch, toRad(-90));
+        this.yaw += -0.01 * e.xy[0];
+        this.yaw %= TAU;
+        this.pitch += -0.01 * e.xy[1];
+        this.pitch = Math.min(this.pitch, toRad(-15));
+        this.pitch = Math.max(this.pitch, toRad(-90));
         this.updateCamera()
     }
-    move(translation){ // do this in view so update is immediate 
-        if (this.go) this.translateTo(translation);
+
+    doShoot() {
+        const pitchMatrix = m4_rotation([1,0,0], this.pitch)
+        const yawMatrix = m4_rotation([0,1,0], this.yaw)
+        const both = m4_multiply(pitchMatrix, yawMatrix);
+        let gun = [this.position[0], this.position[1]-1, this.position[2]];
+        const shoot = v3_transform(gun, both);
+        this.publish("ui", "shoot", shoot);
     }
 }
 AvatarPawn.register("AvatarPawn");
@@ -459,11 +458,7 @@ export class MyViewRoot extends ViewRoot {
         return [InputManager, ThreeRenderManager, ThreeInstanceManager];
     }
 
-    constructor(model) {
-        super(model);
-        this.subscribe("input", " Down", this.doShoot);
-        this.subscribe("input", "tap", this.doShoot);
-    }
+    // no need for a constructor... constructor(model) { super(model); }
 
     onStart() {
         this.buildLights();
@@ -566,15 +561,6 @@ export class MyViewRoot extends ViewRoot {
             mesh.castShadow = true;
             mesh.receiveShadow = true;
         }
-    }
-
-    doShoot() {
-        const pitchMatrix = m4_rotation([1,0,0], pitch)
-        const yawMatrix = m4_rotation([0,1,0], yaw)
-        const both = m4_multiply(pitchMatrix, yawMatrix);
-        let gun = [position[0], position[1]-1, position[2]];
-        const shoot = v3_transform(gun, both);
-        this.publish("ui", "shoot", shoot);
     }
 }
 
