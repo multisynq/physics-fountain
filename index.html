@@ -19,16 +19,33 @@
             }
         </script>
         <script type="module">
-import { StartWorldcore, App, UserManager, User, ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, v3_scale, 
-    v3_add, v3_sub, v3_normalize, ViewRoot, Pawn, InputManager, PM_ThreeVisible, ThreeRenderManager, 
-    PM_Spatial, PM_Avatar, AM_Avatar, THREE, PM_Smoothed, toRad, m4_rotation, m4_multiply, TAU, m4_translation, 
-    v3_transform, q_axisAngle, q_multiply, ThreeInstanceManager, PM_ThreeInstanced, ViewService} from "@croquet/worldcore";
+import { StartWorldcore, App, UserManager, User, ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, 
+    ViewRoot, Pawn, InputManager, PM_ThreeVisible, ThreeRenderManager, PM_Spatial, PM_Avatar, AM_Avatar, 
+    THREE, PM_Smoothed, ThreeInstanceManager, PM_ThreeInstanced, ViewService,
+    v3_scale, v3_add, v3_sub, v3_normalize, v3_magnitude, v3_transform, 
+    q_axisAngle, q_multiply, m4_getTranslation, m4_rotation, m4_multiply, m4_translation, TAU, toRad
+} from "@croquet/worldcore";
 import { RAPIER, RapierManager, AM_RapierWorld, AM_RapierRigidBody} from "@croquet/worldcore-rapier";
 
 function rgb(r, g, b) {
     return [r/255, g/255, b/255];
 }
+//------------------------------------------------------------------------------------------
+//-- MyActor ----------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------
+class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
+    get pawn() { return "AvatarPawn" }
+    init(options) {
+        super.init(options);
+        this.isAvatar = true;
+        //this.subscribe("input", "move", this.move);
+    }
 
+    move(translation){
+        this.translateTo(translation);
+    }
+}
+AvatarActor.register('AvatarActor');
 //------------------------------------------------------------------------------------------
 //-- SprayActor ----------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
@@ -205,11 +222,11 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
 
 }
 FountainActor.register('FountainActor');
+
 //------------------------------------------------------------------------------------------
 //-- Users ---------------------------------------------------------------------------------
 // Create a new avatar when a new user joins.
 //------------------------------------------------------------------------------------------
-
 class MyUserManager extends UserManager {
     get defaultUser() {return MyUser}
 }
@@ -218,19 +235,13 @@ MyUserManager.register('MyUserManager');
 class MyUser extends User {
     init(options) {
         super.init(options);
-        const base = this.wellKnownModel("ModelRoot").base;
-
-        const pitchQ = q_axisAngle([1,0,0], pitch)
-        const yawQ = q_axisAngle([0,1,0], yaw)
-        const rotation = q_multiply(pitchQ, yawQ);
-
+        const fountain = this.wellKnownModel("ModelRoot").fountain;
         this.avatar = AvatarActor.create({
-            parent: base,
+            parent: fountain,
             driver: this.userId,
-            translation: [0,0,0],
-            rotation: rotation
+            tags: ["avatar"],
+            translation: [10, 10, 10],
         });
-        console.log(this.avatar)
     }
 
     saveProps() {
@@ -308,7 +319,104 @@ function setGeometryColor(geometry, color) {
     }
     geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3) );
 }
+//------------------------------------------------------------------------------------------
+//-- AvatarPawn -------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------
+let pitch = toRad(-20);
+let yaw = toRad(-30);
+let position = [0,0,40];
 
+export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_Avatar) {
+
+    constructor(actor) {
+        super(actor);
+        const geometry = new THREE.SphereGeometry( 1, 10, 10 );
+        const material = new THREE.MeshStandardMaterial( {color: new THREE.Color(0,1,0)} );
+        material.side = THREE.SingleSide;
+        material.shadowSide = THREE.SingleSide;
+        material.castShadow = true;
+        const mesh = new THREE.Mesh( geometry, material );
+        this.setRenderObject(mesh);
+        this.resetCamera();
+
+        this.subscribe("input", 'wheel', this.onWheel);
+        this.subscribe("input", "pointerDown", this.doPointerDown);
+        this.subscribe("input", "pointerUp", this.doPointerUp);
+        this.subscribe("input", "pointerDelta", this.doPointerDelta);
+        this.subscribe("input", "rDown", this.resetCamera);
+        this.subscribe("input", "RDown", this.resetAll);
+        this.subscribe("input", "reset", this.resetCamera);
+    }
+
+    resetAll() {
+        this.publish("input", "resetAll");
+        console.log("reset all");
+    }
+
+    resetCamera() {
+        position = [0,0,40];
+        pitch = toRad(-20);
+        yaw = toRad(-30);
+        this.updateCamera();
+    }
+
+    updateCamera() {
+        if (this.paused) return;
+        const rm = this.service("ThreeRenderManager");
+
+        const pitchMatrix = m4_rotation([1,0,0], pitch);
+        const yawMatrix = m4_rotation([0,1,0], yaw);
+
+        let cameraMatrix = m4_translation(position);
+        cameraMatrix = m4_multiply(cameraMatrix,pitchMatrix);
+        cameraMatrix = m4_multiply(cameraMatrix,yawMatrix);
+
+        const avatarTranslation = m4_getTranslation(cameraMatrix);
+        const length = v3_magnitude(avatarTranslation)+2;
+        const norm = v3_normalize(avatarTranslation);
+        avatarTranslation[1]-=1.5
+        // only move if we are the avatar
+        if (this.isMyAvatar) this.translateTo(v3_scale(norm, length));
+        rm.camera.matrix.fromArray(cameraMatrix);
+        rm.camera.matrixAutoUpdate = false;
+        rm.camera.matrixWorldNeedsUpdate = true;
+
+        rm.camera.fov = 60;
+        rm.camera.updateProjectionMatrix();
+    }
+
+    onWheel(data) { // zoom in and out
+        if (this.paused) return;
+        const rm = this.service("ThreeRenderManager");
+        position[2] = Math.max(10, Math.min(100, position[2] - data.deltaY / 10));
+        this.updateCamera(); 
+    }
+ 
+    doPointerDown() {
+        if (this.paused) return;
+        this.dragging = true;
+    }
+
+    doPointerUp() {
+        if (this.paused) return;
+        this.dragging = false;
+    }
+
+    doPointerDelta(e) {
+        if (this.paused) return;
+        if (!this.dragging) return;
+        yaw += -0.01 * e.xy[0];
+        yaw %= TAU;
+        pitch += -0.01 * e.xy[1];
+        pitch = Math.min(pitch, toRad(-15));
+        pitch = Math.max(pitch, toRad(-90));
+        this.updateCamera()
+    }
+    move(translation){ // do this in view so update is immediate 
+        if (this.go) this.translateTo(translation);
+    }
+}
+AvatarPawn.register("AvatarPawn");
 //------------------------------------------------------------------------------------------
 //-- SprayPawn -------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
@@ -355,122 +463,12 @@ export class FountainPawn extends mix(Pawn).with(PM_Spatial, PM_ThreeVisible) {
 FountainPawn.register("FountainPawn");
 
 //------------------------------------------------------------------------------------------
-//-- GodView -------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
-let pitch = toRad(-20);
-let yaw = toRad(-30);
-let position = [0,0,40];
-
-class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_Avatar) {
-
-    constructor(actor) {
-        super(actor);
-        let sphere = new THREE.SphereGeometry( 1, 10, 10 );
-        let material = new THREE.MeshStandardMaterial( {color: new THREE.Color(1,1,1)} );
-        let mesh = new THREE.Mesh( sphere, material );
-        mesh.position.set(...position);
-        let group = new THREE.Group();
-        group.add(mesh);
-        this.setRenderObject(group);
-        console.log("AvatarPawn constructor");
-    }
-}
-AvatarPawn.register("AvatarPawn");
-
-class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
-    get pawn() {return "AvatarPawn"}
-    init(options) {
-        super.init(options);
-        //this.listen("reset", this.reset);
-        //this.listen("move", this.move);
-    }
-}
-AvatarActor.register('AvatarActor');
-
-
-class GodView extends ViewService {
-
-    constructor() {
-        super("GodView");
-        this.resetCamera();
-
-        this.subscribe("input", 'wheel', this.onWheel);
-        this.subscribe("input", "pointerDown", this.doPointerDown);
-        this.subscribe("input", "pointerUp", this.doPointerUp);
-        this.subscribe("input", "pointerDelta", this.doPointerDelta);
-        this.subscribe("input", "rDown", this.resetCamera);
-        this.subscribe("input", "RDown", this.resetAll);
-        this.subscribe("input", "reset", this.resetCamera);
-    }
-
-    resetAll() {
-        this.publish("input", "resetAll");
-        console.log("reset all");
-    }
-
-    resetCamera() {
-        position = [0,0,40];
-        pitch = toRad(-20);
-        yaw = toRad(-30);
-        this.updateCamera();
-    }
-
-    updateCamera() {
-        if (this.paused) return;
-        const rm = this.service("ThreeRenderManager");
-
-        const pitchMatrix = m4_rotation([1,0,0], pitch);
-        const yawMatrix = m4_rotation([0,1,0], yaw);
-
-        let cameraMatrix = m4_translation(position);
-        cameraMatrix = m4_multiply(cameraMatrix,pitchMatrix);
-        cameraMatrix = m4_multiply(cameraMatrix,yawMatrix);
-
-        rm.camera.matrix.fromArray(cameraMatrix);
-        rm.camera.matrixAutoUpdate = false;
-        rm.camera.matrixWorldNeedsUpdate = true;
-
-        rm.camera.fov = 60;
-        rm.camera.updateProjectionMatrix();
-    }
-
-    onWheel(data) {
-        if (this.paused) return;
-        const rm = this.service("ThreeRenderManager");
-        position[2] = Math.max(10, Math.min(100, position[2] - data.deltaY / 10));
-        this.updateCamera(); 
-    }
- 
-    doPointerDown() {
-        if (this.paused) return;
-        this.dragging = true;
-    }
-
-    doPointerUp() {
-        if (this.paused) return;
-        this.dragging = false;
-    }
-
-    doPointerDelta(e) {
-        if (this.paused) return;
-        if (!this.dragging) return;
-        yaw += -0.01 * e.xy[0];
-        yaw %= TAU;
-        pitch += -0.01 * e.xy[1];
-        pitch = Math.min(pitch, toRad(-15));
-        pitch = Math.max(pitch, toRad(-90));
-        this.updateCamera()
-    }
-}
-
-//------------------------------------------------------------------------------------------
 //-- MyViewRoot ----------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------
 export class MyViewRoot extends ViewRoot {
 
     static viewServices() {
-        return [InputManager, ThreeRenderManager, ThreeInstanceManager, GodView ];
-        // return [InputManager, ThreeRenderManager, ThreeInstanceManager, WidgetManager2, GodView];
+        return [InputManager, ThreeRenderManager, ThreeInstanceManager];
     }
 
     constructor(model) {
@@ -596,12 +594,11 @@ export class MyViewRoot extends ViewRoot {
         const shoot = v3_transform(gun, both);
         this.publish("ui", "shoot", shoot);
     }
-
 }
 
 StartWorldcore({
     appId: 'io.croquet.physics',
-    apiKey: '1Mnk3Gf93ls03eu0Barbdzzd3xl1Ibxs7khs8Hon9',
+    apiKey: '2d0fPrsWoWQFrelRWB1TftMoNJLfOk4Ni6XkQvswX3', //'1Mnk3Gf93ls03eu0Barbdzzd3xl1Ibxs7khs8Hon9',
     model: MyModelRoot,
     view: MyViewRoot,
 }); 
