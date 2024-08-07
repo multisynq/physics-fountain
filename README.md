@@ -10,12 +10,13 @@ All this in about 600 lines of code which includes the HTML and styles.
 Uses Multisynq key
 
 ## UI 
+
+Click or tap to shoot
+
 Drag to spin
 
 Wheel to zoom in/out
 
-Click to shoot
+Press 'r' - to reset original position
 
-'r' - to reset original position
-
-'R' - to reset all uses to original position
+Press 'R' - to reset all users to original position
