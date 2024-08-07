@@ -46,6 +46,11 @@ class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
     // no need to override init, but we can if we need to 
     init(options) {
         super.init(options);
+        this.subscribe("input", "resetAll", this.reset);
+    }
+
+    reset() {
+        this.say("reset");
     }
 }
 AvatarActor.register('AvatarActor');
@@ -170,7 +175,7 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
         this.createCollider(cd);
 
         this.subscribe("ui", "shoot", this.doShoot);
-        this.subscribe("input", "resetAll", this.reset);
+
         this.future(1000).spray();
     }
 
@@ -199,13 +204,7 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
         spray.rigidBody.applyTorqueImpulse(new RAPIER.Vector3(...spin), true);
     }
 
-    reset() {
-        console.log("model reset")
-        this.publish("input", "reset");
-    }
-
     doShoot(gun) {
-
         // give a bit more upwards velocity as the gun gets further away
         const aim = v3_normalize(v3_sub([0,Math.abs(gun[2])/3,0], gun));
         const type = this.random();
@@ -329,37 +328,47 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
         material.castShadow = true;
         const mesh = new THREE.Mesh( geometry, material );
         this.setRenderObject(mesh);
-        this.resetCamera();
+        this.setPose();
+        if (this.isMyAvatar) this.updatePose();
+    }
 
+    drive() {
         this.subscribe("input", 'wheel', this.onWheel);
         this.subscribe("input", "pointerDown", this.doPointerDown);
         this.subscribe("input", "pointerUp", this.doPointerUp);
         this.subscribe("input", "pointerDelta", this.doPointerDelta);
-        this.subscribe("input", "rDown", this.resetCamera);
+        this.subscribe("input", "rDown", this.resetPose);
         this.subscribe("input", "RDown", this.resetAll);
-        this.subscribe("input", "reset", this.resetCamera);
         this.subscribe("input", " Down", this.doShoot);
         this.subscribe("input", "tap", this.doShoot);
+        this.listen("reset", this.resetPose);
     }
+
+    park() { } // don't do anything
 
     resetAll() {
         this.publish("input", "resetAll");
         console.log("reset all");
     }
 
-    resetCamera() {
+    setPose() {
         this.position = [0,0,40];
         this.pitch = toRad(-20);
         this.yaw = toRad(-30);
-        this.updateCamera();
     }
 
-    updateCamera() {
+    resetPose() {
+        if (this.isMyAvatar) {
+            this.setPose();
+            this.updatePose();
+        }
+    }
+
+    updatePose() {
         const rm = this.service("ThreeRenderManager");
 
         const pitchMatrix = m4_rotation([1,0,0], this.pitch);
         const yawMatrix = m4_rotation([0,1,0], this.yaw);
-
         let cameraMatrix = m4_translation(this.position);
         cameraMatrix = m4_multiply(cameraMatrix,pitchMatrix);
         cameraMatrix = m4_multiply(cameraMatrix,yawMatrix);
@@ -368,8 +377,8 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
         const length = v3_magnitude(avatarTranslation)+2;
         const norm = v3_normalize(avatarTranslation);
         avatarTranslation[1]-=1.5
-        // only move if we are the avatar
-        if (this.isMyAvatar) this.translateTo(v3_scale(norm, length));
+        this.translateTo(v3_scale(norm, length));
+
         rm.camera.matrix.fromArray(cameraMatrix);
         rm.camera.matrixAutoUpdate = false;
         rm.camera.matrixWorldNeedsUpdate = true;
@@ -379,9 +388,8 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
     }
 
     onWheel(data) { // zoom in and out
-        const rm = this.service("ThreeRenderManager");
         this.position[2] = Math.max(10, Math.min(100, this.position[2] - data.deltaY / 10));
-        this.updateCamera(); 
+        this.updatePose(); 
     }
  
     doPointerDown() {
@@ -399,7 +407,7 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
         this.pitch += -0.01 * e.xy[1];
         this.pitch = Math.min(this.pitch, toRad(-15));
         this.pitch = Math.max(this.pitch, toRad(-90));
-        this.updateCamera()
+        this.updatePose()
     }
 
     doShoot() {
