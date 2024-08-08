@@ -27,6 +27,10 @@
             }
         </script>
         <script type="module">
+
+// this is the code for the Physics Fountain example. It creates a fountain of rigid bodies that are affected by gravity and collide with the world.
+// It uses the Croquet framework with the Worldcore and Worldcore-Rapier extensions. Worldcore is a simple 3D engine that provides a basic scene graph and input handling.
+// Rapier is a physics engine that provides rigid body dynamics and collision detection. 
 import { StartWorldcore, App, UserManager, User, ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, 
     ViewRoot, Pawn, InputManager, PM_ThreeVisible, ThreeRenderManager, PM_Spatial, PM_Avatar, AM_Avatar, 
     THREE, PM_Smoothed, ThreeInstanceManager, PM_ThreeInstanced, ViewService,
@@ -39,9 +43,7 @@ function rgb(r, g, b) {
     return [r/255, g/255, b/255];
 }
 
-//------------------------------------------------------------------------------------------
-//-- MyActor ----------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
+// AvatarActor represents the player's avatar. It is represented by a sphere that other users can see.
 class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
     get pawn() { return "AvatarPawn" }
     // no need to override init, but we can if we need to 
@@ -55,9 +57,8 @@ class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
     }
 }
 AvatarActor.register('AvatarActor');
-//------------------------------------------------------------------------------------------
-//-- SprayActor ----------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
+
+// SprayActor generates dynamic rigid bodies that are affected by gravity and collide with the world
 class SprayActor extends mix(Actor).with(AM_Spatial, AM_RapierRigidBody) {
     get pawn() {return "SprayPawn"}
 
@@ -93,17 +94,12 @@ class SprayActor extends mix(Actor).with(AM_Spatial, AM_RapierRigidBody) {
                 cd.setDensity(1);
             break;
         }
-
         this.createCollider(cd);
-
     }
-
 }
 SprayActor.register('SprayActor');
 
-//------------------------------------------------------------------------------------------
-//-- FountainActor ------------------------------------------------------------------------
-//-----------------------------------------------------------------------------------------
+// FountainActor generates a new rigid body every 300ms and applies a random impulse to it.
 class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_RapierRigidBody) {
     get pawn() {return "FountainPawn"}
 
@@ -183,10 +179,7 @@ class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_Rapie
 }
 FountainActor.register('FountainActor');
 
-//------------------------------------------------------------------------------------------
-//-- Users ---------------------------------------------------------------------------------
-// Create a new avatar when a new user joins.
-//------------------------------------------------------------------------------------------
+// MyUserManager/MyUser Create a new avatar when a new user joins.
 class MyUserManager extends UserManager {
     get defaultUser() {return MyUser}
 }
@@ -208,9 +201,8 @@ class MyUser extends User {
     }
 }
 MyUser.register('MyUser');
-//------------------------------------------------------------------------------------------
-//-- MyModelRoot ---------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
+
+// MyModelRoot the base model for the application. It creates the fountain and seeds the colors.
 export class MyModelRoot extends ModelRoot {
 
     static modelServices() {
@@ -261,7 +253,7 @@ export class MyModelRoot extends ModelRoot {
 }
 MyModelRoot.register("MyModelRoot");
 
-// Views
+// Views/Pawns - the visible representation of the actors
 function setGeometryColor(geometry, color) {
     const count = geometry.getAttribute("position").count;
     const colors = [];
@@ -270,9 +262,8 @@ function setGeometryColor(geometry, color) {
     }
     geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3) );
 }
-//------------------------------------------------------------------------------------------
-//-- AvatarPawn -------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
+
+// AvatarPawn provides both the visual representation of the avatar and the controls for the user.
 export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_Avatar) {
 
     constructor(actor) {
@@ -288,7 +279,7 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
         if (this.isMyAvatar) this.updatePose();
     }
 
-    drive() {
+    drive() { // if this is my avatar, then subscribe to user events
         this.subscribe("input", 'wheel', this.onWheel);
         this.subscribe("input", "pointerDown", this.doPointerDown);
         this.subscribe("input", "pointerUp", this.doPointerUp);
@@ -300,14 +291,14 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
         this.listen("reset", this.resetPose);
     }
 
-    park() { } // don't do anything
+    park() { } // if this is not my avatar don't do anything
 
     resetAll() {
         this.publish("input", "resetAll");
         console.log("reset all");
     }
 
-    setPose() {
+    setPose() { // initial and reset pose
         this.position = [0,0,40];
         this.pitch = toRad(-20);
         this.yaw = toRad(-30);
@@ -376,9 +367,8 @@ export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_
     }
 }
 AvatarPawn.register("AvatarPawn");
-//------------------------------------------------------------------------------------------
-//-- SprayPawn -------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
+
+// SprayPawn the visual representation of the SprayActor rigid bodies
 export class SprayPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeInstanced) {
     constructor(...args) {
         super(...args);
@@ -387,9 +377,7 @@ export class SprayPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeInstanced) {
 }
 SprayPawn.register("SprayPawn");
 
-//------------------------------------------------------------------------------------------
-//-- FountainPawn -------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
+// FountainPawn the visual representation of the fountain nozzle and base/floor
 export class FountainPawn extends mix(Pawn).with(PM_Spatial, PM_ThreeVisible) {
     constructor(...args) {
         super(...args);
@@ -420,9 +408,7 @@ export class FountainPawn extends mix(Pawn).with(PM_Spatial, PM_ThreeVisible) {
 }
 FountainPawn.register("FountainPawn");
 
-//------------------------------------------------------------------------------------------
-//-- MyViewRoot ----------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------
+// MyViewRoot the initial view for the application. It creates the lights and instances for the scene.
 export class MyViewRoot extends ViewRoot {
 
     static viewServices() {
@@ -534,8 +520,10 @@ export class MyViewRoot extends ViewRoot {
     }
 }
 
+// create the Multisynq widget at the bottom/left of the screen that includes a QR code and debug info
 App.makeWidgetDock(); // shows QR code
 
+// Start the application with the configuration options - appId, apiKey, password, model, view, tps/tick rate
 StartWorldcore({
     appId: 'io.croquet.physics',
     apiKey: '2d0fPrsWoWQFrelRWB1TftMoNJLfOk4Ni6XkQvswX3', //'1Mnk3Gf93ls03eu0Barbdzzd3xl1Ibxs7khs8Hon9',
