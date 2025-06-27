@@ -1,541 +1,535 @@
 <!DOCTYPE html>
 <html>
-    <head>
-        <title>Physics Fountain</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
-        <meta charset="utf-8">
-        <style>
-            body {
-                overflow: hidden;
-                background: rgb(30, 30, 30);
+<head>
+    <title>Multisynq 3D Physics Fountain</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+    <meta charset="utf-8">
+    <style>
+        body { margin: 0; overflow: hidden; background: #87CEEB; color: white; }
+        canvas { display: block; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "@multisynq/client": "https://cdn.jsdelivr.net/npm/@multisynq/client@1.0.4/bundled/multisynq-client.esm.js",
+                "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+                "@dimforge/rapier3d-deterministic-compat": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-deterministic-compat@0.17.3/rapier.es.js"
             }
-            #codelink {
-                position: fixed; bottom: 10px; right: 10px; padding: .5em; border-radius: 30px;
-                opacity: 50%; background: lightgray; box-shadow: 1px 1px 5px black;
-                text-decoration: none; font-family: monospace; font-size: 1.5em; z-index: 1000;
-            }
-            #codelink:hover {
-                opacity: 100%;
-            }
-        </style>
-        <script type="importmap">
-            {
-                "imports": {
-                    "@croquet/worldcore": "https://esm.run/@croquet/worldcore@pre",
-                    "@croquet/worldcore-rapier": "https://esm.run/@croquet/worldcore-rapier@pre"
-                }
-            }
-        </script>
-        <script type="module">
+        }
+    </script>
+</head>
+<body>
+    <script type="module">
 
-// this is the code for the Physics Fountain example. It creates a fountain of rigid bodies that are affected by gravity and collide with the world.
-// It uses the Croquet framework with the Worldcore and Worldcore-Rapier extensions. Worldcore is a simple 3D engine that provides a basic scene graph and input handling.
-// Rapier is a physics engine that provides rigid body dynamics and collision detection. 
-import { StartWorldcore, App, UserManager, User, ModelRoot, Actor, mix, AM_Spatial, sphericalRandom, 
-    ViewRoot, Pawn, InputManager, PM_ThreeVisible, ThreeRenderManager, PM_Spatial, PM_Avatar, AM_Avatar, 
-    THREE, PM_Smoothed, ThreeInstanceManager, PM_ThreeInstanced, ViewService,
-    v3_scale, v3_add, v3_sub, v3_normalize, v3_magnitude, v3_transform, 
-    q_axisAngle, q_multiply, m4_getTranslation, m4_rotation, m4_multiply, m4_translation, TAU, toRad
-} from "@croquet/worldcore";
-import { RAPIER, RapierManager, AM_RapierWorld, AM_RapierRigidBody, RapierVersion } from "@croquet/worldcore-rapier";
+// this is the code for the Physics Fountain example.
+// It creates a fountain of rigid bodies that are affected by gravity and collide with the world.
 
-function rgb(r, g, b) {
-    return [r/255, g/255, b/255];
+// It uses Multisynq for multiplayer synchronization, Rapier as the a physics engine that provides
+// rigid body dynamics and collision detection, and Three.js for rendering the 3D scene.
+
+import * as Multisynq from "@multisynq/client";
+import * as THREE from "three";
+import RAPIER from "@dimforge/rapier3d-deterministic-compat";
+
+// --- RAPIER 3D SERIALIZATION FOR MULTISYNQ ---
+class MultisynqRapierWorld extends RAPIER.World {
+    createCollider(desc, parent) {
+        const collider = super.createCollider(desc, parent);
+        collider._world = this;
+        return collider;
+    }
+
+    createRigidBody(desc) {
+        const body = super.createRigidBody(desc);
+        body._world = this;
+        return body;
+    }
+
+    static restoreSnapshot(snapshot) {
+        const world = super.restoreSnapshot(snapshot);
+        Object.setPrototypeOf(world, MultisynqRapierWorld.prototype);
+        world.forEachRigidBody((body) => (body._world = world));
+        world.forEachCollider((collider) => (collider._world = world));
+        return world;
+    }
+
+    static SerializerDefs = {
+        MultisynqRapierWorld: {
+            cls: MultisynqRapierWorld,
+            write: (world) => world.takeSnapshot(),
+            read: (snapshot) => MultisynqRapierWorld.restoreSnapshot(snapshot),
+        },
+        "RAPIER.RigidBody": {
+            cls: RAPIER.RigidBody,
+            write: (body) => [body._world, body.handle],
+            read: ([world, handle]) => world.getRigidBody(handle),
+        },
+        "RAPIER.Collider": {
+            cls: RAPIER.Collider,
+            write: (collider) => [collider._world, collider.handle],
+            read: ([world, handle]) => world.getCollider(handle),
+        },
+    };
 }
 
-// AvatarActor represents the player's avatar. It is represented by a sphere that other users can see.
-class AvatarActor extends mix(Actor).with(AM_Spatial, AM_Avatar) {
-    get pawn() { return "AvatarPawn" }
-    // no need to override init, but we can if we need to 
-    init(options) {
-        super.init(options);
-        this.subscribe("input", "resetAll", this.reset);
+// --- SHARED CONSTANTS & HELPERS ---
+const SHAPES = ["cube", "ball", "cylinder", "cone"];
+const COLORS = [
+    0xf2d7d5, 0xd98880, 0xc0392b, 0xf0b27a, 0xe67e22, 0xaf601a, 0xf7dc6f,
+    0xf1c40f, 0xb7950b, 0x7dcea0, 0x27ae60, 0x1e8449, 0x85c1e9, 0x3498db,
+    0x2874a6, 0xc39bd3, 0x9b59b6, 0x76448a, 0xeaeaea, 0x808080, 0x333333,
+];
+
+// --- MODEL (The Shared Simulation) ---
+class RootModel extends Multisynq.Model {
+    static types() {
+        return MultisynqRapierWorld.SerializerDefs;
+    }
+    init() {
+        const gravity = { x: 0.0, y: -9.81, z: 0.0 };
+        this.world = new MultisynqRapierWorld(gravity);
+        this.createArena();
+        this.liveObjects = [];
+        this.maxObjects = 250;
+        this.players = new Map();
+        this.subscribe(this.sessionId, "view-join", this.onViewJoin);
+        this.subscribe(this.sessionId, "view-exit", this.onViewExit);
+        this.subscribe("input", "shoot", this.onShoot);
+        this.future(1000).spray();
+        this.future(30).step();
     }
 
-    reset() {
-        this.say("reset");
-    }
-}
-AvatarActor.register('AvatarActor');
-
-// SprayActor generates dynamic rigid bodies that are affected by gravity and collide with the world
-class SprayActor extends mix(Actor).with(AM_Spatial, AM_RapierRigidBody) {
-    get pawn() {return "SprayPawn"}
-
-    get shape() {return this._shape || "cube"}
-    get index() { return this._index || 0 }
-
-    init(options) {
-        super.init(options);
-        this.parent.live.push(this);
-        if (this.parent.live.length > this.parent.max) this.parent.live.shift().destroy();
-
-        this.buildCollider();
+    createArena() {
+        this.world.createCollider(RAPIER.ColliderDesc.cuboid(15, 0.5, 15));
+        this.world.createCollider(
+            RAPIER.ColliderDesc.cuboid(0.5, 2, 15).setTranslation(-14, 0, 0)
+        );
+        this.world.createCollider(
+            RAPIER.ColliderDesc.cuboid(0.5, 2, 15).setTranslation(14, 0, 0)
+        );
+        this.world.createCollider(
+            RAPIER.ColliderDesc.cuboid(15, 2, 0.5).setTranslation(0, 0, -14)
+        );
+        this.world.createCollider(
+            RAPIER.ColliderDesc.cuboid(15, 2, 0.5).setTranslation(0, 0, 14)
+        );
     }
 
-    buildCollider() {
-        let cd;
-        switch (this.shape) {
+    spawnObject(options) {
+        if (this.liveObjects.length >= this.maxObjects) {
+            const oldObject = this.liveObjects.shift();
+            this.world.removeRigidBody(oldObject.body);
+            this.publish(this.id, "object-removed", oldObject.body.handle);
+        }
+        const rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic().setTranslation(
+            ...options.translation
+        );
+        const body = this.world.createRigidBody(rigidBodyDesc);
+        let colliderDesc;
+        switch (options.shape) {
             case "cone":
-                cd = RAPIER.ColliderDesc.cone(0.5, 0.5);
-                cd.setDensity(4);
+                colliderDesc = RAPIER.ColliderDesc.cone(0.5, 0.5).setDensity(
+                    4.0
+                );
                 break;
             case "ball":
-                cd = RAPIER.ColliderDesc.ball(0.5);
-                cd.setDensity(2);
+                colliderDesc = RAPIER.ColliderDesc.ball(0.5).setDensity(2.0);
                 break;
             case "cylinder":
-                cd = RAPIER.ColliderDesc.cylinder(0.5, 0.5);
-                cd.setDensity(1.5);
+                colliderDesc = RAPIER.ColliderDesc.cylinder(
+                    0.5,
+                    0.5
+                ).setDensity(1.5);
                 break;
-            case "cube":
             default:
-                cd = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5);
-                cd.setDensity(1);
-            break;
+                colliderDesc = RAPIER.ColliderDesc.cuboid(
+                    0.5,
+                    0.5,
+                    0.5
+                ).setDensity(1.0);
+                break;
         }
-        this.createCollider(cd);
+        this.world.createCollider(colliderDesc, body);
+        const newObject = { body, shape: options.shape, color: options.color };
+        this.liveObjects.push(newObject);
+        this.publish(this.id, "object-added", {
+            handle: newObject.body.handle,
+            shape: newObject.shape,
+            color: newObject.color,
+        });
+        body.applyImpulse(new RAPIER.Vector3(...options.impulse), true);
+        body.applyTorqueImpulse(new RAPIER.Vector3(...options.torque), true);
     }
-}
-SprayActor.register('SprayActor');
-
-// FountainActor generates a new rigid body every 300ms and applies a random impulse to it.
-class FountainActor extends mix(Actor).with(AM_Spatial, AM_RapierWorld, AM_RapierRigidBody) {
-    get pawn() {return "FountainPawn"}
-
-    init(options) {
-        super.init(options);
-        this.live = [];
-
-        let cd = RAPIER.ColliderDesc.cuboid(15, 0.5, 15);
-        this.createCollider(cd);
-        cd = RAPIER.ColliderDesc.cuboid(0.5, 1, 0.5);
-        this.createCollider(cd);
-
-        cd = RAPIER.ColliderDesc.cuboid(0.5, 2, 15);
-        cd.translation = new RAPIER.Vector3(-14,0,0);
-        this.createCollider(cd);
-
-        cd = RAPIER.ColliderDesc.cuboid(0.5, 2, 15);
-        cd.translation = new RAPIER.Vector3(14,0,0);
-        this.createCollider(cd);
-
-        cd = RAPIER.ColliderDesc.cuboid(15, 2, 0.5);
-        cd.translation = new RAPIER.Vector3(0,0,14);
-        this.createCollider(cd);
-
-        cd = RAPIER.ColliderDesc.cuboid(15, 2, 0.5);
-        cd.translation = new RAPIER.Vector3(0,0,-14);
-        this.createCollider(cd);
-
-        this.subscribe("ui", "shoot", this.doShoot);
-
-        this.future(1000).spray();
-    }
-
-    get max() { return this._max || 50}
 
     spray() {
-        this.spawn();
-        if (!this.doomed) this.future(300).spray();
-    }
-
-    spawn() {
-        const type = this.random();
-        let shape = "cube";
-
-        if (type > 0.4) shape = "cylinder";
-        if (type > 0.7) shape = "ball";
-        if (type > 0.9) shape = "cone";
-
-        const index = Math.floor(this.random()*20);
-        const spray = SprayActor.create({parent: this, shape, index, translation: [0,3,0], rigidBodyType: "dynamic"});
-
-        const spin = v3_scale(sphericalRandom(),Math.random() * 0.5);
-        const force = [0, 17.5 + 5 * Math.random(), 0];
-
-        spray.rigidBody.applyImpulse(new RAPIER.Vector3(...force), true);
-        spray.rigidBody.applyTorqueImpulse(new RAPIER.Vector3(...spin), true);
-    }
-
-    doShoot(gun) {
-        // give a bit more upwards velocity as the gun gets further away
-        const aim = v3_normalize(v3_sub([0,Math.abs(gun[2])/3,0], gun));
         const type = this.random();
         let shape = "cube";
         if (type > 0.4) shape = "cylinder";
         if (type > 0.7) shape = "ball";
         if (type > 0.9) shape = "cone";
-        const index = Math.floor(this.random()*20);
-        const translation = v3_add(gun, [0,0,0]);
-        const bullet = SprayActor.create({parent: this, shape, index, translation, rigidBodyType: "dynamic"});
-        const force = v3_scale(aim, 40);
-        const spin = v3_scale(sphericalRandom(),Math.random() * 0.5);
-
-        bullet.rigidBody.applyImpulse(new RAPIER.Vector3(...force), true);
-        bullet.rigidBody.applyTorqueImpulse(new RAPIER.Vector3(...spin), true);
+        this.spawnObject({
+            shape,
+            color: COLORS[Math.floor(this.random() * COLORS.length)],
+            translation: [0, 3, 0],
+            impulse: [0, 17.5 + 5 * this.random(), 0],
+            torque: [
+                this.random() - 0.5,
+                this.random() - 0.5,
+                this.random() - 0.5,
+            ],
+        });
+        this.future(300).spray();
     }
 
-}
-FountainActor.register('FountainActor');
-
-// MyUserManager/MyUser Create a new avatar when a new user joins.
-class MyUserManager extends UserManager {
-    get defaultUser() {return MyUser}
-}
-MyUserManager.register('MyUserManager');
-
-class MyUser extends User {
-    init(options) {
-        super.init(options);
-        const fountain = this.wellKnownModel("ModelRoot").fountain;
-        this.avatar = AvatarActor.create({
-            parent: fountain,
-            driver: this.userId
+    onShoot({ aim, origin, color }) {
+        const type = this.random();
+        let shape = "cube";
+        if (type > 0.4) shape = "cylinder";
+        if (type > 0.7) shape = "ball";
+        if (type > 0.9) shape = "cone";
+        this.spawnObject({
+            shape,
+            color,
+            translation: origin,
+            impulse: aim.map((v) => v * 50),
+            torque: [
+                this.random() - 0.5,
+                this.random() - 0.5,
+                this.random() - 0.5,
+            ],
         });
     }
 
-    destroy() {
-        super.destroy();
-        if (this.avatar) this.avatar.destroy();
+    step() {
+        this.world.step();
+        const updates = this.liveObjects.map((obj) => ({
+            handle: obj.body.handle,
+            pos: obj.body.translation(),
+            rot: obj.body.rotation(),
+        }));
+        this.publish(this.id, "world-updated", updates);
+        this.future(30).step();
+    }
+
+    onViewJoin({ viewId }) {
+        const player = {
+            color: COLORS[Math.floor(this.random() * COLORS.length)],
+        };
+        this.players.set(viewId, player);
+        this.publish(this.id, "player-added", { viewId, player });
+    }
+
+    onViewExit({ viewId }) {
+        this.players.delete(viewId);
     }
 }
-MyUser.register('MyUser');
+RootModel.register("RootModel");
 
-// MyModelRoot the base model for the application. It creates the fountain and seeds the colors.
-export class MyModelRoot extends ModelRoot {
-
-    static modelServices() {
-        return [RapierManager, MyUserManager];
+// --- VIEW (The 3D Rendering and User Interface) ---
+class RootView extends Multisynq.View {
+    constructor(model) {
+        super(model);
+        this.model = model;
+        this.myColor = 0xffffff;
+        this.setupScene();
+        this.setupLights();
+        this.createArenaMesh();
+        this.setupInstancedMeshes();
+        this.setupControls();
+        this.meshData = new Map();
+        this.model.liveObjects.forEach((obj) =>
+            this.onObjectAdded({
+                handle: obj.body.handle,
+                shape: obj.shape,
+                color: obj.color,
+            })
+        );
+        this.model.players.forEach((player, viewId) =>
+            this.onPlayerAdded({ viewId, player })
+        );
+        this.subscribe(model.id, "object-added", (data) =>
+            this.onObjectAdded(data)
+        );
+        this.subscribe(model.id, "object-removed", (handle) =>
+            this.onObjectRemoved(handle)
+        );
+        this.subscribe(model.id, "player-added", (data) =>
+            this.onPlayerAdded(data)
+        );
+        this.subscribe(
+            model.id,
+            { event: "world-updated", handling: "oncePerFrame" },
+            (updates) => this.onWorldUpdate(updates)
+        );
     }
 
-    init(...args) {
-        super.init(...args);
-        console.log("Start root model!!");
-        this.seedColors();
-
-        this.fountain = FountainActor.create({gravity: [0,-9.8,0], timestep:50, translation: [0,0,0], max: 200, rigidBodyType: "static"});
-    }
-
-    seedColors() {
-        this.colors = [
-            rgb(242, 215, 213),        // Red
-            rgb(217, 136, 128),        // Red
-            rgb(192, 57, 43),        // Red
-
-            rgb(240, 178, 122),        // Orange
-            rgb(230, 126, 34),        // Orange
-            rgb(175, 96, 26),        // Orange
-
-            rgb(247, 220, 111),        // Yellow
-            rgb(241, 196, 15),        // Yellow
-            rgb(183, 149, 11),        // Yellow
-
-            rgb(125, 206, 160),        // Green
-            rgb(39, 174, 96),        // Green
-            rgb(30, 132, 73),        // Green
-
-            rgb(133, 193, 233),         // Blue
-            rgb(52, 152, 219),        // Blue
-            rgb(40, 116, 166),        // Blue
-
-            rgb(195, 155, 211),        // Purple
-            rgb(155, 89, 182),         // Purple
-            rgb(118, 68, 138),        // Purple
-
-            [0.9, 0.9, 0.9],        // White
-            [0.5, 0.5, 0.5],        // Gray
-            [0.2, 0.2, 0.2]        // Black
-        ];
-
-    }
-
-}
-MyModelRoot.register("MyModelRoot");
-
-// Views/Pawns - the visible representation of the actors
-function setGeometryColor(geometry, color) {
-    const count = geometry.getAttribute("position").count;
-    const colors = [];
-    for (let i = 0; i < count; i++) {
-        colors.push(...color);
-    }
-    geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3) );
-}
-
-// AvatarPawn provides both the visual representation of the avatar and the controls for the user.
-export class AvatarPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeVisible, PM_Avatar) {
-
-    constructor(actor) {
-        super(actor);
-        const geometry = new THREE.SphereGeometry( 1, 10, 10 );
-        const material = new THREE.MeshStandardMaterial( {color: new THREE.Color(0,1,0)} );
-        material.side = THREE.SingleSide;
-        material.shadowSide = THREE.SingleSide;
-        material.castShadow = true;
-        const mesh = new THREE.Mesh( geometry, material );
-        this.setRenderObject(mesh);
-        this.setPose();
-        if (this.isMyAvatar) this.updatePose();
-    }
-
-    drive() { // if this is my avatar, then subscribe to user events
-        this.subscribe("input", 'wheel', this.onWheel);
-        this.subscribe("input", "pointerDown", this.doPointerDown);
-        this.subscribe("input", "pointerUp", this.doPointerUp);
-        this.subscribe("input", "pointerDelta", this.doPointerDelta);
-        this.subscribe("input", "rDown", this.resetPose);
-        this.subscribe("input", "RDown", this.resetAll);
-        this.subscribe("input", " Down", this.doShoot);
-        this.subscribe("input", "tap", this.doShoot);
-        this.listen("reset", this.resetPose);
-    }
-
-    park() { } // if this is not my avatar don't do anything
-
-    resetAll() {
-        this.publish("input", "resetAll");
-        console.log("reset all");
-    }
-
-    setPose() { // initial and reset pose
-        this.position = [0,0,40];
-        this.pitch = toRad(-20);
-        this.yaw = toRad(-30);
-    }
-
-    resetPose() {
-        if (this.isMyAvatar) {
-            this.setPose();
-            this.updatePose();
+    detach() {
+        this.renderer.dispose();
+        if (this.canvas && this.canvas.parentElement) {
+            this.canvas.parentElement.removeChild(this.canvas);
         }
+
+        // [FIX] Remove all DOM event listeners to prevent zombie handlers.
+        document.removeEventListener("pointerdown", this.onPointerDown);
+        document.removeEventListener("pointerup", this.onPointerUp);
+        document.removeEventListener("pointermove", this.onPointerMove);
+        document.removeEventListener("wheel", this.onWheel);
+        document.removeEventListener("keydown", this.onKeyDown);
+        document.removeEventListener("click", this.onClick);
+        window.removeEventListener("resize", this.onWindowResize);
+
+        super.detach();
     }
 
-    updatePose() {
-        const rm = this.service("ThreeRenderManager");
-
-        const pitchMatrix = m4_rotation([1,0,0], this.pitch);
-        const yawMatrix = m4_rotation([0,1,0], this.yaw);
-        let cameraMatrix = m4_translation(this.position);
-        cameraMatrix = m4_multiply(cameraMatrix,pitchMatrix);
-        cameraMatrix = m4_multiply(cameraMatrix,yawMatrix);
-
-        const avatarTranslation = m4_getTranslation(cameraMatrix);
-        const length = v3_magnitude(avatarTranslation)+2;
-        const norm = v3_normalize(avatarTranslation);
-        avatarTranslation[1]-=1.5
-        this.translateTo(v3_scale(norm, length));
-
-        rm.camera.matrix.fromArray(cameraMatrix);
-        rm.camera.matrixAutoUpdate = false;
-        rm.camera.matrixWorldNeedsUpdate = true;
-
-        rm.camera.fov = 60;
-        rm.camera.updateProjectionMatrix();
+    setupScene() {
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x87ceeb);
+        this.scene.fog = new THREE.Fog(0x87ceeb, 50, 200);
+        this.camera = new THREE.PerspectiveCamera(
+            60,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.canvas = this.renderer.domElement;
+        document.body.appendChild(this.canvas);
     }
 
-    onWheel(data) { // zoom in and out
-        this.position[2] = Math.max(10, Math.min(100, this.position[2] - data.deltaY / 10));
-        this.updatePose(); 
-    }
- 
-    doPointerDown() {
-        this.dragging = true;
-    }
-
-    doPointerUp() {
-        this.dragging = false;
-    }
-
-    doPointerDelta(e) {
-        if (!this.dragging) return;
-        this.yaw += -0.01 * e.xy[0];
-        this.yaw %= TAU;
-        this.pitch += -0.01 * e.xy[1];
-        this.pitch = Math.min(this.pitch, toRad(-15));
-        this.pitch = Math.max(this.pitch, toRad(-90));
-        this.updatePose()
-    }
-
-    doShoot() {
-        const pitchMatrix = m4_rotation([1,0,0], this.pitch)
-        const yawMatrix = m4_rotation([0,1,0], this.yaw)
-        const both = m4_multiply(pitchMatrix, yawMatrix);
-        let gun = [this.position[0], this.position[1]-1, this.position[2]];
-        const shoot = v3_transform(gun, both);
-        this.publish("ui", "shoot", shoot);
-    }
-}
-AvatarPawn.register("AvatarPawn");
-
-// SprayPawn the visual representation of the SprayActor rigid bodies
-export class SprayPawn extends mix(Pawn).with(PM_Smoothed, PM_ThreeInstanced) {
-    constructor(...args) {
-        super(...args);
-        this.useInstance(this.actor.shape + this.actor.index);
-    }
-}
-SprayPawn.register("SprayPawn");
-
-// FountainPawn the visual representation of the fountain nozzle and base/floor
-export class FountainPawn extends mix(Pawn).with(PM_Spatial, PM_ThreeVisible) {
-    constructor(...args) {
-        super(...args);
-
-        const group = new THREE.Group();
-
-        this.nozzleGeometry = new THREE.CylinderGeometry( 1, 0.5, 5, 10 );
-        this.nozzlematerial = new THREE.MeshStandardMaterial( {color: new THREE.Color(1,0,1)} );
-        this.nozzlematerial.side = THREE.DoubleSide;
-        this.nozzlematerial.shadowSide = THREE.DoubleSide;
-
-        const nozzle = new THREE.Mesh( this.nozzleGeometry, this.nozzlematerial );
-        nozzle.castShadow = true;
-
-        this.baseGeometry = new THREE.BoxGeometry( 30, 1, 30 );
-        this.baseMaterial = new THREE.MeshStandardMaterial( {color: new THREE.Color(0.35,0.75,0.25)} );
-        this.baseMaterial.side = THREE.DoubleSide;
-        this.baseMaterial.shadowSide = THREE.DoubleSide;
-
-        const base = new THREE.Mesh( this.baseGeometry, this.baseMaterial );
-        base.receiveShadow = true;
-
-        group.add(base);
-        group.add(nozzle);
-
-        this.setRenderObject(group);
-    }
-}
-FountainPawn.register("FountainPawn");
-
-// MyViewRoot the initial view for the application. It creates the lights and instances for the scene.
-export class MyViewRoot extends ViewRoot {
-
-    static viewServices() {
-        return [InputManager, ThreeRenderManager, ThreeInstanceManager];
-    }
-
-    // no need for a constructor, use default... constructor(model) { super(model); }
-
-    onStart() {
-        this.buildLights();
-        this.buildInstances();
-    }
-
-    buildLights() {
-        const rm = this.service("ThreeRenderManager");
-        rm.renderer.setClearColor(new THREE.Color(0.45, 0.8, 0.8));
-
-        const group = new THREE.Group();
-
-        const ambient = new THREE.AmbientLight( 0xffffff, 0.5 );
-        group.add(ambient);
-
-        const sun = new THREE.DirectionalLight( 0xffffff, 0.7 );
+    setupLights() {
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.0);
         sun.position.set(50, 200, 100);
         sun.castShadow = true;
-        sun.shadow.mapSize.width = 4096;
-        sun.shadow.mapSize.height = 4096;
-        sun.shadow.camera.near = 0.5;
+        sun.shadow.mapSize.width = 2048;
+        sun.shadow.mapSize.height = 2048;
+        sun.shadow.camera.near = 50;
         sun.shadow.camera.far = 300;
-
-        sun.shadow.camera.left = -80
-        sun.shadow.camera.right = 80
-        sun.shadow.camera.top = 80
-        sun.shadow.camera.bottom = -80
-
+        sun.shadow.camera.left = -20;
+        sun.shadow.camera.right = 20;
+        sun.shadow.camera.top = 20;
+        sun.shadow.camera.bottom = -20;
         sun.shadow.bias = -0.001;
-        group.add(sun);
-
-        rm.scene.add(group);
+        this.scene.add(sun);
     }
 
-    buildInstances() {
-        const im = this.service("ThreeInstanceManager");
-
-        const  material = new THREE.MeshStandardMaterial( {color: new THREE.Color(1,1,1)} );
-        material.side = THREE.SingleSide;
-        material.shadowSide = THREE.SingleSide;
-        material.castShadow = true;
-        material.vertexColors = true;
-
-        im.addMaterial("default", material);
-
-        this.buildCubes();
-        this.buildCylinders();
-        this.buildBalls();
-        this.buildCones();
+    createArenaMesh() {
+        const group = new THREE.Group();
+        const base = new THREE.Mesh(
+            new THREE.BoxGeometry(30, 1, 30),
+            new THREE.MeshStandardMaterial({ color: 0x559955 })
+        );
+        base.position.y = -0.3;
+        base.receiveShadow = true;
+        group.add(base);
+        const nozzle = new THREE.Mesh(
+            new THREE.CylinderGeometry(1, 0.5, 3, 10),
+            new THREE.MeshStandardMaterial({ color: 0xff00ff })
+        );
+        nozzle.position.y = 1.5;
+        nozzle.castShadow = true;
+        nozzle.receiveShadow = true;
+        group.add(nozzle);
+        this.scene.add(group);
     }
 
-    buildCubes() {
-        const im = this.service("ThreeInstanceManager");
-        for( let n = 0; n < this.model.colors.length; n++) {
-            const color = this.model.colors[n];
-            const geometry = new THREE.BoxGeometry( 1, 1, 1 );
-            setGeometryColor(geometry, color);
-            im.addGeometry("box" + n, geometry);
-            const mesh = im.addMesh("cube" + n, "box"+n, "default");
+    setupInstancedMeshes() {
+        this.instancedMeshes = new Map();
+        const geometries = {
+            cube: new THREE.BoxGeometry(1, 1, 1),
+            ball: new THREE.SphereGeometry(0.5, 16, 12),
+            cylinder: new THREE.CylinderGeometry(0.5, 0.5, 1, 16),
+            cone: new THREE.ConeGeometry(0.5, 1, 16),
+        };
+        SHAPES.forEach((shape) => {
+            const material = new THREE.MeshStandardMaterial();
+            const mesh = new THREE.InstancedMesh(
+                geometries[shape],
+                material,
+                this.model.maxObjects
+            );
             mesh.castShadow = true;
             mesh.receiveShadow = true;
+            this.scene.add(mesh);
+            this.instancedMeshes.set(shape, { mesh, freeList: [], nextId: 0 });
+        });
+    }
+
+    setupControls() {
+        this.controls = {
+            spherical: new THREE.Spherical(
+                50,
+                (70 * Math.PI) / 180,
+                (-45 * Math.PI) / 180
+            ),
+            dragging: false,
+        };
+        this.controls.spherical.makeSafe();
+
+        // [FIX] Create stable handler functions as instance methods.
+        this.onPointerDown = () => {
+            this.controls.dragging = true;
+        };
+        this.onPointerUp = () => {
+            this.controls.dragging = false;
+        };
+        this.onPointerMove = (e) => {
+            if (!this.controls.dragging) return;
+            this.controls.spherical.theta -= 0.005 * e.movementX;
+            this.controls.spherical.phi -= 0.005 * e.movementY;
+            this.controls.spherical.phi = Math.min(
+                (70 * Math.PI) / 180,
+                this.controls.spherical.phi
+            );
+            this.controls.spherical.makeSafe();
+        };
+        this.onWheel = (e) => {
+            this.controls.spherical.radius = Math.max(
+                15,
+                Math.min(150, this.controls.spherical.radius + e.deltaY / 10)
+            );
+        };
+        this.onShoot = () => {
+            const origin = new THREE.Vector3();
+            this.camera.getWorldPosition(origin);
+            origin.y -= 1; // shoot from slightly below camera
+            const targetPoint = new THREE.Vector3(0, origin.z / 3 + 1, 0); // aim higher when further away
+            const aim = new THREE.Vector3()
+                .subVectors(targetPoint, origin)
+                .normalize();
+            this.publish("input", "shoot", {
+                aim: [aim.x, aim.y, aim.z],
+                origin: [origin.x, origin.y, origin.z],
+                color: this.myColor,
+            });
+        };
+        this.onKeyDown = (e) => {
+            if (e.code === "Space") this.onShoot();
+        };
+        this.onClick = (e) => {
+            if (e.target.tagName !== "A") this.onShoot();
+        };
+        this.onWindowResize = () => {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+        };
+
+        // Add listeners
+        document.addEventListener("pointerdown", this.onPointerDown);
+        document.addEventListener("pointerup", this.onPointerUp);
+        document.addEventListener("pointermove", this.onPointerMove);
+        document.addEventListener("wheel", this.onWheel, { passive: true });
+        document.addEventListener("keydown", this.onKeyDown);
+        document.addEventListener("click", this.onClick);
+        window.addEventListener("resize", this.onWindowResize);
+    }
+
+    onObjectAdded(data) {
+        const { handle, shape, color } = data;
+        const instancer = this.instancedMeshes.get(shape);
+        if (!instancer) return;
+        const instanceId = instancer.freeList.pop() ?? instancer.nextId++;
+        instancer.mesh.setColorAt(instanceId, new THREE.Color(color));
+        instancer.mesh.instanceColor.needsUpdate = true;
+        const newInstanceData = {
+            shape,
+            instanceId,
+            currentPos: new THREE.Vector3(0, -100, 0),
+            currentRot: new THREE.Quaternion(),
+            targetPos: new THREE.Vector3(0, -100, 0),
+            targetRot: new THREE.Quaternion(),
+        };
+        this.meshData.set(handle, newInstanceData);
+    }
+
+    onObjectRemoved(handle) {
+        const data = this.meshData.get(handle);
+        if (!data) return;
+        const instancer = this.instancedMeshes.get(data.shape);
+        instancer.freeList.push(data.instanceId);
+        const matrix = new THREE.Matrix4().makeScale(0, 0, 0);
+        instancer.mesh.setMatrixAt(data.instanceId, matrix);
+        instancer.mesh.instanceMatrix.needsUpdate = true;
+        this.meshData.delete(handle);
+    }
+
+    onPlayerAdded({ viewId, player }) {
+        if (viewId === this.viewId) this.myColor = player.color;
+    }
+
+    onWorldUpdate(updates) {
+        for (const update of updates) {
+            const data = this.meshData.get(update.handle);
+            if (data) {
+                data.targetPos.set(update.pos.x, update.pos.y, update.pos.z);
+                data.targetRot.set(
+                    update.rot.x,
+                    update.rot.y,
+                    update.rot.z,
+                    update.rot.w
+                );
+            }
         }
     }
 
-    buildCylinders() {
-        const im = this.service("ThreeInstanceManager");
-        for( let n = 0; n < this.model.colors.length; n++) {
-            const color = this.model.colors[n];
-            const geometry = new THREE.CylinderGeometry( 0.5, 0.5, 1, 10 );
-            setGeometryColor(geometry, color);
-            im.addGeometry("cylinder" + n, geometry);
-            const mesh = im.addMesh("cylinder" + n, "cylinder"+n, "default");
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
-        }
+    updateCamera() {
+        const newPosition = new THREE.Vector3().setFromSpherical(
+            this.controls.spherical
+        );
+        this.camera.position.copy(newPosition);
+        this.camera.lookAt(0, 0, 0);
     }
 
-    buildBalls() {
-        const im = this.service("ThreeInstanceManager");
-        for( let n = 0; n < this.model.colors.length; n++) {
-            const color = this.model.colors[n];
-            const geometry = new THREE.SphereGeometry( 0.5, 10, 10);
-            setGeometryColor(geometry, color);
-            im.addGeometry("ball" + n, geometry);
-            const mesh = im.addMesh("ball" + n, "ball" + n, "default");
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
-        }
+    updateInstances() {
+        this.meshData.forEach((data) => {
+            const distance = data.currentPos.distanceTo(data.targetPos);
+            if (distance > 3) {
+                data.currentPos.copy(data.targetPos);
+            } else {
+                data.currentPos.lerp(data.targetPos, 0.2);
+            }
+            data.currentRot.slerp(data.targetRot, 0.2);
+        });
+
+        this.instancedMeshes.forEach(({ mesh }) => {
+            mesh.instanceMatrix.needsUpdate = true;
+        });
+
+        this.meshData.forEach((data, handle) => {
+            const instancer = this.instancedMeshes.get(data.shape);
+            const matrix = new THREE.Matrix4().compose(
+                data.currentPos,
+                data.currentRot,
+                new THREE.Vector3(1, 1, 1)
+            );
+            instancer.mesh.setMatrixAt(data.instanceId, matrix);
+        });
     }
 
-    buildCones() {
-        const im = this.service("ThreeInstanceManager");
-        for( let n = 0; n < this.model.colors.length; n++) {
-            const color = this.model.colors[n];
-            const geometry = new THREE.ConeGeometry( 0.5, 1, 10, 1);
-            setGeometryColor(geometry, color);
-            im.addGeometry("cone" + n, geometry);
-            const mesh = im.addMesh("cone" + n, "cone" + n, "default");
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
-        }
+    update(time) {
+        this.updateInstances();
+        this.updateCamera();
+        this.renderer.render(this.scene, this.camera);
     }
 }
 
-// create the Multisynq widget at the bottom/left of the screen that includes a QR code and debug info
-App.makeWidgetDock(); // shows QR code
+async function start() {
+    await RAPIER.init();
+    Multisynq.App.makeWidgetDock();
+    await Multisynq.Session.join({
+        apiKey: "2d0fPrsWoWQFrelRWB1TftMoNJLfOk4Ni6XkQvswX3",
+        appId: "io.multisynq.physics.fountain-rapier",
+        model: RootModel,
+        view: RootView,
+    });
+}
+start();
 
-// Start the application with the configuration options - appId, apiKey, password, model, view, tps/tick rate
-StartWorldcore({
-    appId: 'io.croquet.physics',
-    apiKey: '2d0fPrsWoWQFrelRWB1TftMoNJLfOk4Ni6XkQvswX3', //'1Mnk3Gf93ls03eu0Barbdzzd3xl1Ibxs7khs8Hon9',
-    password: 'password',
-    model: MyModelRoot,
-    view: MyViewRoot,
-    tps: 30,
-}); 
-        </script>
-    </head>
-    <body>
-        <a id="codelink" href="https://github.com/multisynq/physics-fountain/blob/main/index.html"
-        title="View source code on GitHub" target="_blank">{...}</a>
-    </body>
-</html> 
+    </script>
+</body>
+</html>
