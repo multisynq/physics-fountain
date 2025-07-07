@@ -113,9 +113,6 @@ class RootModel extends Multisynq.Model {
         this.createArena();
         this.liveObjects = [];
         this.maxObjects = 250;
-        this.players = new Map();
-        this.subscribe(this.sessionId, "view-join", this.onViewJoin);
-        this.subscribe(this.sessionId, "view-exit", this.onViewExit);
         this.subscribe("input", "shoot", this.onShoot);
         this.future(1000).spray();
         this.future(30).step();
@@ -258,20 +255,6 @@ class RootModel extends Multisynq.Model {
         // though the physics runs at a lower rate
         this.future(30).step();
     }
-
-    // we're not displaying avatars in this example, but could use this to track players
-    // and their colors if we wanted to.
-    onViewJoin({ viewId }) {
-        const player = {
-            color: COLORS[Math.floor(this.random() * COLORS.length)],
-        };
-        this.players.set(viewId, player);
-        this.publish(this.id, "player-added", { viewId, player });
-    }
-
-    onViewExit({ viewId }) {
-        this.players.delete(viewId);
-    }
 }
 RootModel.register("RootModel"); // Register the model class with Multisynq serializer
 
@@ -280,7 +263,6 @@ class RootView extends Multisynq.View {
     constructor(model) {
         super(model);
         this.model = model;
-        this.myColor = 0xffffff;
         this.setupScene();
         this.setupLights();
         this.createArenaMesh();
@@ -295,19 +277,12 @@ class RootView extends Multisynq.View {
                 color: obj.color,
             })
         );
-        // same for each player in the model (even though we don't really use players in this example)
-        this.model.players.forEach((player, viewId) =>
-            this.onPlayerAdded({ viewId, player })
-        );
         // subscribe to model events to handle object addition/removal and player updates
         this.subscribe(model.id, "object-added", (data) =>
             this.onObjectAdded(data)
         );
         this.subscribe(model.id, "object-removed", (handle) =>
             this.onObjectRemoved(handle)
-        );
-        this.subscribe(model.id, "player-added", (data) =>
-            this.onPlayerAdded(data)
         );
         // since each world update has all the live objects' positions and rotations,
         // we only need to subscribe to the "world-updated" event once per frame.
@@ -474,7 +449,7 @@ class RootView extends Multisynq.View {
             this.publish("input", "shoot", {
                 aim: [aim.x, aim.y, aim.z],
                 origin: [origin.x, origin.y, origin.z],
-                color: this.myColor,
+                color: 0xffffff,
             });
         };
         this.onKeyDown = (e) => {
@@ -532,10 +507,6 @@ class RootView extends Multisynq.View {
         instancer.mesh.setMatrixAt(data.instanceId, matrix);
         instancer.mesh.instanceMatrix.needsUpdate = true;
         this.meshData.delete(handle);
-    }
-
-    onPlayerAdded({ viewId, player }) {
-        if (viewId === this.viewId) this.myColor = player.color;
     }
 
     // when the model publishes a world update, we update the target positions and rotations.
