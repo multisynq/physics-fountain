@@ -24,7 +24,7 @@
 // this is the code for the Physics Fountain example.
 // It creates a fountain of rigid bodies that are affected by gravity and collide with the world.
 
-// It uses Multisynq for multiplayer synchronization, Rapier as the a physics engine that provides
+// It uses Multisynq for multiplayer synchronization, Rapier as the physics engine that provides
 // rigid body dynamics and collision detection, and Three.js for rendering the 3D scene.
 
 import * as Multisynq from "@multisynq/client";
@@ -32,7 +32,14 @@ import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-deterministic-compat";
 
 // --- RAPIER 3D SERIALIZATION FOR MULTISYNQ ---
+// we add a `_world` property to RAPIER objects to keep track of the world they belong to.
+// This is necessary for Multisynq serialization to work correctly, as it allows us to
+// retrieve the correct instance when deserializing objects from their handles.
+
 class MultisynqRapierWorld extends RAPIER.World {
+
+    // overrides to add `_world` property to rigid bodies and colliders upon creation
+
     createCollider(desc, parent) {
         const collider = super.createCollider(desc, parent);
         collider._world = this;
@@ -45,6 +52,8 @@ class MultisynqRapierWorld extends RAPIER.World {
         return body;
     }
 
+    // overrides to add `_world` property to rigid bodies and colliders when restoring from snapshot
+
     static restoreSnapshot(snapshot) {
         const world = super.restoreSnapshot(snapshot);
         Object.setPrototypeOf(world, MultisynqRapierWorld.prototype);
@@ -52,6 +61,11 @@ class MultisynqRapierWorld extends RAPIER.World {
         world.forEachCollider((collider) => (collider._world = world));
         return world;
     }
+
+    // Rapier provides a `takeSnapshot` method that returns a snapshot of the world state,
+    // and a `restoreSnapshot` static method that creates a new world from a snapshot.
+    // These serializer definitions are used in the RootModel's `types()` method to define how
+    // to serialize and deserialize the world, rigid bodies, and colliders.
 
     static SerializerDefs = {
         MultisynqRapierWorld: {
@@ -80,11 +94,19 @@ const COLORS = [
     0x2874a6, 0xc39bd3, 0x9b59b6, 0x76448a, 0xeaeaea, 0x808080, 0x333333,
 ];
 
+// any constants used in the model need to be added to the Multisynq.Constants object
+// to ensure they get hashed into  the session ID just like the model classes.
+Multisynq.Constants.SHAPES = SHAPES;
+Multisynq.Constants.COLORS = COLORS;
+
 // --- MODEL (The Shared Simulation) ---
 class RootModel extends Multisynq.Model {
+    // Define the special serializer for Rapier objects.
     static types() {
         return MultisynqRapierWorld.SerializerDefs;
     }
+
+    // Models must be initialized by an init() method, not a constructor.
     init() {
         const gravity = { x: 0.0, y: -9.81, z: 0.0 };
         this.world = new MultisynqRapierWorld(gravity);
@@ -99,6 +121,7 @@ class RootModel extends Multisynq.Model {
         this.future(30).step();
     }
 
+    // the arena is a simple box with walls
     createArena() {
         this.world.createCollider(RAPIER.ColliderDesc.cuboid(15, 0.5, 15));
         this.world.createCollider(
@@ -116,11 +139,14 @@ class RootModel extends Multisynq.Model {
     }
 
     spawnObject(options) {
+        // limit the number of live objects to maxObjects
+        // if we reach the limit, remove the oldest object
         if (this.liveObjects.length >= this.maxObjects) {
             const oldObject = this.liveObjects.shift();
             this.world.removeRigidBody(oldObject.body);
             this.publish(this.id, "object-removed", oldObject.body.handle);
         }
+        // create a new rigid body and collider based on the options provided
         const rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic().setTranslation(
             ...options.translation
         );
@@ -150,6 +176,8 @@ class RootModel extends Multisynq.Model {
                 break;
         }
         this.world.createCollider(colliderDesc, body);
+        // store the object in the liveObjects array
+        // and publish an event to notify the view about the new object
         const newObject = { body, shape: options.shape, color: options.color };
         this.liveObjects.push(newObject);
         this.publish(this.id, "object-added", {
@@ -157,10 +185,15 @@ class RootModel extends Multisynq.Model {
             shape: newObject.shape,
             color: newObject.color,
         });
+        // apply impulse and torque to the body to make it move
         body.applyImpulse(new RAPIER.Vector3(...options.impulse), true);
         body.applyTorqueImpulse(new RAPIER.Vector3(...options.torque), true);
     }
 
+    // spray() is called periodically to spawn new objects in the fountain
+    // it randomly chooses a shape and color, and applies an upward impulse
+    // to make the objects shoot up into the air
+    // it also applies a random torque to make the objects spin
     spray() {
         const type = this.random();
         let shape = "cube";
@@ -178,9 +211,15 @@ class RootModel extends Multisynq.Model {
                 this.random() - 0.5,
             ],
         });
+        // schedule the next spray after a short delay
+        // this creates a continuous fountain effect
         this.future(300).spray();
     }
 
+    // onShoot() is called when a player shoots an object
+    // it takes the aim direction, origin position, and color from the event data
+    // it randomly chooses a shape and spawns the object with an impulse
+    // in the direction of the aim, and a random torque to make it spin
     onShoot({ aim, origin, color }) {
         const type = this.random();
         let shape = "cube";
@@ -191,7 +230,7 @@ class RootModel extends Multisynq.Model {
             shape,
             color,
             translation: origin,
-            impulse: aim.map((v) => v * 50),
+            impulse: aim.map((v) => v * 50), // aim is a normalized vector, scale it for the impulse
             torque: [
                 this.random() - 0.5,
                 this.random() - 0.5,
@@ -200,17 +239,28 @@ class RootModel extends Multisynq.Model {
         });
     }
 
+    // step() is called periodically to update the physics world
+    // it steps the world simulation forward and publishes the updated positions and rotations of live objects
+    // this is where the physics simulation happens, and the view gets updated with the new state
     step() {
+        // advance the physics simulation by one step
         this.world.step();
+        // collect the updated positions and rotations of live objects
         const updates = this.liveObjects.map((obj) => ({
             handle: obj.body.handle,
             pos: obj.body.translation(),
             rot: obj.body.rotation(),
         }));
+        // publish the updates to the view
         this.publish(this.id, "world-updated", updates);
+        // schedule the next step after a short delay, this creates a continuous simulation loop
+        // the view will apply smoothing to the updates to ensure smooth rendering at 60 fps even
+        // though the physics runs at a lower rate
         this.future(30).step();
     }
 
+    // we're not displaying avatars in this example, but could use this to track players
+    // and their colors if we wanted to.
     onViewJoin({ viewId }) {
         const player = {
             color: COLORS[Math.floor(this.random() * COLORS.length)],
@@ -223,7 +273,7 @@ class RootModel extends Multisynq.Model {
         this.players.delete(viewId);
     }
 }
-RootModel.register("RootModel");
+RootModel.register("RootModel"); // Register the model class with Multisynq serializer
 
 // --- VIEW (The 3D Rendering and User Interface) ---
 class RootView extends Multisynq.View {
@@ -237,6 +287,7 @@ class RootView extends Multisynq.View {
         this.setupInstancedMeshes();
         this.setupControls();
         this.meshData = new Map();
+        // for each live object in the model, create an instance in the view
         this.model.liveObjects.forEach((obj) =>
             this.onObjectAdded({
                 handle: obj.body.handle,
@@ -244,9 +295,11 @@ class RootView extends Multisynq.View {
                 color: obj.color,
             })
         );
+        // same for each player in the model (even though we don't really use players in this example)
         this.model.players.forEach((player, viewId) =>
             this.onPlayerAdded({ viewId, player })
         );
+        // subscribe to model events to handle object addition/removal and player updates
         this.subscribe(model.id, "object-added", (data) =>
             this.onObjectAdded(data)
         );
@@ -256,6 +309,10 @@ class RootView extends Multisynq.View {
         this.subscribe(model.id, "player-added", (data) =>
             this.onPlayerAdded(data)
         );
+        // since each world update has all the live objects' positions and rotations,
+        // we only need to subscribe to the "world-updated" event once per frame.
+        // this will ignore multiple events arriving in the same frame,
+        // and will only process the latest update for each object.
         this.subscribe(
             model.id,
             { event: "world-updated", handling: "oncePerFrame" },
@@ -263,13 +320,14 @@ class RootView extends Multisynq.View {
         );
     }
 
+    // when the session is interrupted, the view wil be detached.
+    // it needs to clean up all resources that were created,
+    // since on reconnection the view will be re-created.
     detach() {
         this.renderer.dispose();
         if (this.canvas && this.canvas.parentElement) {
             this.canvas.parentElement.removeChild(this.canvas);
         }
-
-        // [FIX] Remove all DOM event listeners to prevent zombie handlers.
         document.removeEventListener("pointerdown", this.onPointerDown);
         document.removeEventListener("pointerup", this.onPointerUp);
         document.removeEventListener("pointermove", this.onPointerMove);
@@ -281,6 +339,7 @@ class RootView extends Multisynq.View {
         super.detach();
     }
 
+    // standard Three.js setup methods
     setupScene() {
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x87ceeb);
@@ -317,13 +376,16 @@ class RootView extends Multisynq.View {
         this.scene.add(sun);
     }
 
+    // create the arena mesh that represents the physical arena in the scene
+    // this is a simple box with a nozzle on top
+    // it matches the physical arena created in the model but we don't render the walls
     createArenaMesh() {
         const group = new THREE.Group();
         const base = new THREE.Mesh(
             new THREE.BoxGeometry(30, 1, 30),
             new THREE.MeshStandardMaterial({ color: 0x559955 })
         );
-        base.position.y = -0.3;
+        base.position.y = -0.25; // slightly below zero so shadows look correct
         base.receiveShadow = true;
         group.add(base);
         const nozzle = new THREE.Mesh(
@@ -337,6 +399,9 @@ class RootView extends Multisynq.View {
         this.scene.add(group);
     }
 
+    // we use instanced meshes to render the physics objects efficiently.
+    // this allows us to render many instances of the same geometry with different colors
+    // without creating separate mesh objects for each instance.
     setupInstancedMeshes() {
         this.instancedMeshes = new Map();
         const geometries = {
@@ -345,7 +410,7 @@ class RootView extends Multisynq.View {
             cylinder: new THREE.CylinderGeometry(0.5, 0.5, 1, 16),
             cone: new THREE.ConeGeometry(0.5, 1, 16),
         };
-        SHAPES.forEach((shape) => {
+        for (const shape of SHAPES) {
             const material = new THREE.MeshStandardMaterial();
             const mesh = new THREE.InstancedMesh(
                 geometries[shape],
@@ -356,9 +421,12 @@ class RootView extends Multisynq.View {
             mesh.receiveShadow = true;
             this.scene.add(mesh);
             this.instancedMeshes.set(shape, { mesh, freeList: [], nextId: 0 });
-        });
+        }
     }
 
+    // simple orbit controls for the camera
+    // allows the user to drag to rotate the camera around the scene,
+    // and use the mouse wheel to zoom in and out.
     setupControls() {
         this.controls = {
             spherical: new THREE.Spherical(
@@ -370,7 +438,6 @@ class RootView extends Multisynq.View {
         };
         this.controls.spherical.makeSafe();
 
-        // [FIX] Create stable handler functions as instance methods.
         this.onPointerDown = () => {
             this.controls.dragging = true;
         };
@@ -393,6 +460,9 @@ class RootView extends Multisynq.View {
                 Math.min(150, this.controls.spherical.radius + e.deltaY / 10)
             );
         };
+        // when tapping the space bar or clicking,
+        // we shoot an object from the camera's position towards a target point
+        // right above the fountain's nozzle.
         this.onShoot = () => {
             const origin = new THREE.Vector3();
             this.camera.getWorldPosition(origin);
@@ -419,7 +489,7 @@ class RootView extends Multisynq.View {
             this.renderer.setSize(window.innerWidth, window.innerHeight);
         };
 
-        // Add listeners
+        // Add listeners so they can be removed later in detach()
         document.addEventListener("pointerdown", this.onPointerDown);
         document.addEventListener("pointerup", this.onPointerUp);
         document.addEventListener("pointermove", this.onPointerMove);
@@ -429,6 +499,8 @@ class RootView extends Multisynq.View {
         window.addEventListener("resize", this.onWindowResize);
     }
 
+    // when an object is added to the model, we create an instance in the view
+    // and set its color and shape based on the data provided.
     onObjectAdded(data) {
         const { handle, shape, color } = data;
         const instancer = this.instancedMeshes.get(shape);
@@ -447,6 +519,10 @@ class RootView extends Multisynq.View {
         this.meshData.set(handle, newInstanceData);
     }
 
+    // when an object is removed from the model, we free its instance in the view
+    // and set its matrix to zero scale to effectively hide it.
+    // we also push the instance ID back to the free list
+    // so it can be reused for future objects of the same shape.
     onObjectRemoved(handle) {
         const data = this.meshData.get(handle);
         if (!data) return;
@@ -462,6 +538,9 @@ class RootView extends Multisynq.View {
         if (viewId === this.viewId) this.myColor = player.color;
     }
 
+    // when the model publishes a world update, we update the target positions and rotations.
+    // this does not immediately change the instance positions, but rather sets the target positions
+    // that will be smoothed in the next update cycle.
     onWorldUpdate(updates) {
         for (const update of updates) {
             const data = this.meshData.get(update.handle);
@@ -477,6 +556,7 @@ class RootView extends Multisynq.View {
         }
     }
 
+    // updateCamera() is called every frame to update the camera position based on the controls.
     updateCamera() {
         const newPosition = new THREE.Vector3().setFromSpherical(
             this.controls.spherical
@@ -485,6 +565,11 @@ class RootView extends Multisynq.View {
         this.camera.lookAt(0, 0, 0);
     }
 
+    // updateInstances() is called every frame to update the positions and rotations of the instances.
+    // it lerps the current positions towards the target positions, unless the distance is too large,
+    // in which case it snaps the current position to the target position.
+    // this ensures smooth movement of the instances, even if the physics simulation runs at a lower
+    // rate than the rendering (typically 60 fps).
     updateInstances() {
         this.meshData.forEach((data) => {
             const distance = data.currentPos.distanceTo(data.targetPos);
@@ -511,6 +596,8 @@ class RootView extends Multisynq.View {
         });
     }
 
+    // the update() method is called every frame by Multisynq.
+    // it updates the instances and camera, and renders the scene.
     update(time) {
         this.updateInstances();
         this.updateCamera();
@@ -519,8 +606,8 @@ class RootView extends Multisynq.View {
 }
 
 async function start() {
-    await RAPIER.init();
-    Multisynq.App.makeWidgetDock();
+    await RAPIER.init(); // load web assembly for Rapier
+    Multisynq.App.makeWidgetDock(); // show QR code
     await Multisynq.Session.join({
         apiKey: "2d0fPrsWoWQFrelRWB1TftMoNJLfOk4Ni6XkQvswX3",
         appId: "io.multisynq.physics.fountain-rapier",
