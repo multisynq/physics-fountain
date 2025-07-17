@@ -114,6 +114,7 @@ class RootModel extends Multisynq.Model {
         this.liveObjects = [];
         this.maxObjects = 250;
         this.subscribe("input", "shoot", this.onShoot);
+        this.subscribe("input", "reset-camera", this.onResetCamera);
         this.future(1000).spray();
         this.future(30).step();
     }
@@ -236,6 +237,12 @@ class RootModel extends Multisynq.Model {
         });
     }
 
+    // onResetCamera() is called when a player requests a camera reset
+    // it broadcasts the reset event to all participants
+    onResetCamera() {
+        this.publish(this.id, "camera-reset");
+    }
+
     // step() is called periodically to update the physics world
     // it steps the world simulation forward and publishes the updated positions and rotations of live objects
     // this is where the physics simulation happens, and the view gets updated with the new state
@@ -284,6 +291,8 @@ class RootView extends Multisynq.View {
         this.subscribe(model.id, "object-removed", (handle) =>
             this.onObjectRemoved(handle)
         );
+        // subscribe to camera reset events
+        this.subscribe(model.id, "camera-reset", () => this.onCameraReset());
         // since each world update has all the live objects' positions and rotations,
         // we only need to subscribe to the "world-updated" event once per frame.
         // this will ignore multiple events arriving in the same frame,
@@ -452,8 +461,14 @@ class RootView extends Multisynq.View {
                 color: 0xffffff,
             });
         };
+
+        // when pressing R, we request a camera reset for all participants
+        this.onResetCamera = () => {
+            this.publish("input", "reset-camera");
+        };
         this.onKeyDown = (e) => {
             if (e.code === "Space") this.onShoot();
+            if (e.code === "KeyR") this.onResetCamera();
         };
         this.onClick = (e) => {
             if (e.target.tagName !== "A") this.onShoot();
@@ -525,6 +540,15 @@ class RootView extends Multisynq.View {
                 );
             }
         }
+    }
+
+    // onCameraReset() is called when a camera reset event is received
+    // it resets the camera to its initial position
+    onCameraReset() {
+        this.controls.spherical.radius = 50;
+        this.controls.spherical.phi = (70 * Math.PI) / 180;
+        this.controls.spherical.theta = (-45 * Math.PI) / 180;
+        this.controls.spherical.makeSafe();
     }
 
     // updateCamera() is called every frame to update the camera position based on the controls.
