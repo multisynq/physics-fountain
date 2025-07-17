@@ -335,6 +335,9 @@ class RootView extends Multisynq.View {
 
         // Initialize user count display
         this.onUserCountChanged();
+
+        // Reset camera
+        this.onCameraReset();
     }
 
     // when the session is interrupted, the view wil be detached.
@@ -446,14 +449,9 @@ class RootView extends Multisynq.View {
     // and use the mouse wheel to zoom in and out.
     setupControls() {
         this.controls = {
-            spherical: new THREE.Spherical(
-                50,
-                (70 * Math.PI) / 180,
-                (-45 * Math.PI) / 180
-            ),
+            spherical: new THREE.Spherical(),
             dragging: false,
         };
-        this.controls.spherical.makeSafe();
 
         this.onPointerDown = () => {
             this.controls.dragging = true;
@@ -589,7 +587,7 @@ class RootView extends Multisynq.View {
     onCameraReset() {
         this.controls.spherical.radius = 50;
         this.controls.spherical.phi = (70 * Math.PI) / 180;
-        this.controls.spherical.theta = (-45 * Math.PI) / 180;
+        this.controls.spherical.theta = (-30 * Math.PI) / 180;
         this.controls.spherical.makeSafe();
     }
 
