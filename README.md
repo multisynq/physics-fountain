@@ -34,3 +34,4 @@ For smooth 60 fps rendering of the 30fps simulation there is a smoothing factor 
 * Click or tap to shoot
 * Drag to spin
 * Wheel to move closer/further away
+* press R to reset the camera for everyone
