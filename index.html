@@ -7,6 +7,19 @@
     <style>
         body { margin: 0; overflow: hidden; background: #87CEEB; color: white; }
         canvas { display: block; }
+        #userCount {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            z-index: 1000;
+            pointer-events: none;
+        }
     </style>
     <script type="importmap">
         {
@@ -19,6 +32,7 @@
     </script>
 </head>
 <body>
+    <div id="userCount">Joining...</div>
     <script type="module">
 
 // this is the code for the Physics Fountain example.
@@ -115,6 +129,8 @@ class RootModel extends Multisynq.Model {
         this.maxObjects = 250;
         this.subscribe("input", "shoot", this.onShoot);
         this.subscribe("input", "reset-camera", this.onResetCamera);
+        this.subscribe(this.sessionId, "view-join", this.onViewJoin);
+        this.subscribe(this.sessionId, "view-exit", this.onViewExit);
         this.future(1000).spray();
         this.future(30).step();
     }
@@ -237,6 +253,18 @@ class RootModel extends Multisynq.Model {
         });
     }
 
+    // onViewJoin() is called when a new user joins the session
+    // it notifies all participants that the user count has changed
+    onViewJoin() {
+        this.publish(this.id, "user-count-changed");
+    }
+
+    // onViewExit() is called when a user leaves the session
+    // it notifies all participants that the user count has changed
+    onViewExit() {
+        this.publish(this.id, "user-count-changed");
+    }
+
     // onResetCamera() is called when a player requests a camera reset
     // it broadcasts the reset event to all participants
     onResetCamera() {
@@ -293,6 +321,8 @@ class RootView extends Multisynq.View {
         );
         // subscribe to camera reset events
         this.subscribe(model.id, "camera-reset", () => this.onCameraReset());
+        // subscribe to user count changes
+        this.subscribe(model.id, "user-count-changed", () => this.onUserCountChanged());
         // since each world update has all the live objects' positions and rotations,
         // we only need to subscribe to the "world-updated" event once per frame.
         // this will ignore multiple events arriving in the same frame,
@@ -302,6 +332,9 @@ class RootView extends Multisynq.View {
             { event: "world-updated", handling: "oncePerFrame" },
             (updates) => this.onWorldUpdate(updates)
         );
+
+        // Initialize user count display
+        this.onUserCountChanged();
     }
 
     // when the session is interrupted, the view wil be detached.
@@ -539,6 +572,15 @@ class RootView extends Multisynq.View {
                     update.rot.w
                 );
             }
+        }
+    }
+
+    // onUserCountChanged() is called when the user count changes
+    // it reads the current count from the model and updates the display
+    onUserCountChanged() {
+        const userCountElement = document.getElementById('userCount');
+        if (userCountElement) {
+            userCountElement.textContent = `Users: ${this.model.viewCount}`;
         }
     }
 
