@@ -644,10 +644,12 @@ async function start() {
     await RAPIER.init(); // load web assembly for Rapier
     Multisynq.App.makeWidgetDock(); // show QR code
     await Multisynq.Session.join({
-        apiKey: "2d0fPrsWoWQFrelRWB1TftMoNJLfOk4Ni6XkQvswX3",
+        apiKey: "234567_Paste_Your_Own_API_Key_Here_7654321",
         appId: "io.multisynq.physics.fountain-rapier",
         model: RootModel,
         view: RootView,
+        name: Multisynq.App.autoSession(),  // random session name
+        password: "password",               // no password needed
     });
 }
 start();
